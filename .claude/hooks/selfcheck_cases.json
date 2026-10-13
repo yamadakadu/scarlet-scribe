@@ -1,0 +1,48 @@
+{
+  "bash": [
+    ["git status", "allow"],
+    ["git restore --staged backend/a.py", "allow"],
+    ["git log --oneline -5", "allow"],
+    ["ls -la", "allow"],
+    ["env FOO=1 ls", "allow"],
+    ["git push origin conector/cliente-http", "ask"],
+    ["git commit -m 'x'", "ask"],
+    ["rm -r build", "ask"],
+    ["find . -name '*.pyc' -delete", "ask"],
+    ["git push --force origin main", "block"],
+    ["git commit --no-verify -m x", "block"],
+    ["git commit -nm x", "block"],
+    ["git -c core.hooksPath=/dev/null commit -m x", "block"],
+    ["git config core.hooksPath ''", "block"],
+    ["git config --get core.hooksPath", "allow"],
+    ["git reset --hard HEAD~1", "block"],
+    ["git clean -fd", "block"],
+    ["git checkout -- .", "block"],
+    ["git branch -D conector/x", "block"],
+    ["git rebase main", "block"],
+    ["cat .env", "block"],
+    ["grep TOKEN backend/.env.local", "block"],
+    ["cat .env.example", "allow"],
+    ["printenv", "block"],
+    ["env | grep CLICKUP", "block"],
+    ["docker compose config", "block"],
+    ["uv add --dev pytest", "block"],
+    ["npm install -D vitest", "block"],
+    ["curl -X POST https://api.clickup.com/api/v2/list/1/task", "block"],
+    ["curl -H 'Authorization: x' https://api.clickup.com/api/v2/team", "allow"]
+  ],
+  "read": [
+    [{"file_path": "REPO/.env"}, "block"],
+    [{"file_path": "REPO/backend/.env.production"}, "block"],
+    [{"file_path": "REPO/.env.example"}, "allow"],
+    [{"pattern": "TOKEN", "path": "REPO/.env"}, "block"],
+    [{"file_path": "REPO/ARCHITECTURE.md"}, "allow"]
+  ],
+  "edit_on_main": [
+    [{"file_path": "REPO/PLANO_DE_EXECUCAO.md", "content": "x"}, "allow"],
+    [{"file_path": "REPO/backend/src/scarlet_scribe/api/app.py", "content": "x"}, "block"],
+    [{"file_path": "REPO/backend/tests/test_api.py", "content": "x"}, "block"],
+    [{"file_path": "REPO/.git/config", "content": "x"}, "block"],
+    [{"file_path": "/home/nobody/fora-do-repo.md", "content": "x"}, "allow"]
+  ]
+}

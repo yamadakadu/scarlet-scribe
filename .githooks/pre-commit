@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""git pre-commit: checks the staged changes before every commit (agents and humans).
+
+- branch: <agente>/<feature> commits may only touch that agent's area;
+- forbidden files: secrets (.env, keys), generated artifacts, local files, oversized files;
+- secrets inside the added lines;
+- project rules: no Phase 2 work in Phase 1, no tests before the MVP, read-only ClickUp connector.
+"""
+
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip())
+sys.path.insert(0, str(ROOT / ".claude" / "hooks"))
+
+from _common import (  # noqa: E402
+    POLICY,
+    area_problems,
+    clickup_problems,
+    forbidden_file_problems,
+    phase_problems,
+    repo_context,
+    secret_problems,
+    tests_problems,
+)
+
+GUIDANCE = """
+Commit bloqueado. NÃO use --no-verify nem altere core.hooksPath. Caminho correto:
+  1. Tire o arquivo do commit: git restore --staged <arquivo>
+     (no primeiro commit do repositório: git rm --cached <arquivo>)
+  2. Se o arquivo nunca deveria ser versionado, proponha incluí-lo no .gitignore
+     (área do Maestro).
+  3. Se for um segredo real: mova-o para o .env, nunca para o código. Se ele já saiu
+     desta máquina, avise o Carlos para trocar a credencial.
+  4. Se for falso positivo ou uma exceção legítima: informe o Maestro, que consulta o
+     Carlos. Só com a aprovação dele a impressão digital entra em
+     .githooks/secrets-allowlist.txt.
+"""
+
+
+def git(*args: str) -> str:
+    return subprocess.check_output(["git", *args], text=True, cwd=ROOT)
+
+
+def staged_changes() -> list[tuple[str, list[str]]]:
+    """[(status, [paths])] of the index; renames/copies carry the old and the new path."""
+    out = git("diff", "--cached", "--name-status", "-z", "-M")
+    parts = out.split("\0")
+    changes, i = [], 0
+    while i < len(parts) and parts[i]:
+        status = parts[i]
+        n = 2 if status[0] in "RC" else 1
+        changes.append((status, parts[i + 1 : i + 1 + n]))
+        i += 1 + n
+    return changes
+
+
+def added_lines() -> dict[str, list[str]]:
+    out = git("diff", "--cached", "-U0", "--no-color", "--no-ext-diff", "--diff-filter=ACMR", "-M")
+    lines: dict[str, list[str]] = {}
+    current = None
+    for line in out.splitlines():
+        if line.startswith("+++ "):
+            current = line[6:] if line.startswith("+++ b/") else None
+            if current:
+                lines.setdefault(current, [])
+        elif current and line.startswith("+") and not line.startswith("+++"):
+            lines[current].append(line[1:])
+    return lines
+
+
+def staged_size(path: str) -> int | None:
+    try:
+        return int(git("cat-file", "-s", f":{path}").strip())
+    except subprocess.CalledProcessError:
+        return None
+
+
+def main() -> int:
+    ctx = repo_context(ROOT)
+    problems: list[str] = []
+    if ctx is None:
+        return 0
+    if ctx.branch == "HEAD":
+        problems.append("HEAD destacado: faça o commit numa branch <agente>/<feature>.")
+
+    agent = ctx.agent
+    check_area = agent not in (None, "maestro") and not ctx.merging
+    if agent is None and ctx.branch != "HEAD":
+        problems.append(
+            f"Branch '{ctx.branch}' fora do padrão <agente>/<feature> "
+            f"(agentes: {', '.join(POLICY['agents'])})."
+        )
+
+    content = added_lines()
+    for status, paths in staged_changes():
+        new_path = paths[-1]
+        for p in paths if check_area else []:
+            problems += area_problems(ctx, p)
+        if status[0] == "D":
+            continue
+        problems += forbidden_file_problems(new_path, staged_size(new_path))
+        text = "\n".join(content.get(new_path, []))
+        problems += phase_problems(new_path, text)
+        problems += tests_problems(new_path, text)
+        problems += clickup_problems(new_path, text)
+        problems += secret_problems(new_path, content.get(new_path, []))
+
+    if problems:
+        unique = list(dict.fromkeys(problems))
+        print("pre-commit: problemas encontrados:\n- " + "\n- ".join(unique), file=sys.stderr)
+        print(GUIDANCE, file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

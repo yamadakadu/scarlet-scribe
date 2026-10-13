@@ -1,0 +1,69 @@
+{
+  "phase": 1,
+  "main_branches": ["main"],
+  "maestro_paths": [
+    "ARCHITECTURE.md",
+    "CLAUDE.md",
+    "PLANO_DE_EXECUCAO.md",
+    "PROJECT.md",
+    "README.md",
+    ".gitignore",
+    ".claude/",
+    ".githooks/"
+  ],
+  "agents": {
+    "alicerce": [
+      "backend/pyproject.toml",
+      "backend/uv.lock",
+      "backend/.python-version",
+      "backend/README.md",
+      "backend/alembic.ini",
+      "backend/alembic/env.py",
+      "backend/alembic/script.py.mako",
+      "backend/Dockerfile",
+      "backend/src/scarlet_scribe/__init__.py",
+      "backend/src/scarlet_scribe/config.py",
+      "frontend/Dockerfile",
+      "docker-compose.yml",
+      ".env.example",
+      ".gitignore",
+      ".dockerignore",
+      "pyproject.toml",
+      "uv.lock",
+      ".python-version",
+      "src/"
+    ],
+    "batedor": ["backend/scripts/"],
+    "conector": ["backend/src/scarlet_scribe/connectors/", "backend/scripts/"],
+    "arquivista": [
+      "backend/src/scarlet_scribe/domain/",
+      "backend/src/scarlet_scribe/db/",
+      "backend/alembic/versions/"
+    ],
+    "sincronista": ["backend/src/scarlet_scribe/sync/"],
+    "portal": ["backend/src/scarlet_scribe/api/"],
+    "vitrine": ["frontend/"],
+    "revisor": [],
+    "guardiao": [
+      "backend/src/scarlet_scribe/auth/",
+      "backend/src/scarlet_scribe/api/deps.py",
+      "backend/src/scarlet_scribe/api/routes/auth.py"
+    ],
+    "ponte": [
+      "backend/src/scarlet_scribe/connectors/clickup/oauth.py",
+      "backend/src/scarlet_scribe/auth/crypto.py",
+      "backend/src/scarlet_scribe/api/routes/integrations.py"
+    ]
+  },
+  "phase2_only_agents": ["guardiao", "ponte"],
+  "phase2_paths": [
+    "backend/src/scarlet_scribe/auth/",
+    "backend/src/scarlet_scribe/connectors/clickup/oauth.py",
+    "backend/src/scarlet_scribe/api/routes/auth.py",
+    "backend/src/scarlet_scribe/api/routes/integrations.py",
+    "backend/src/scarlet_scribe/api/routes/time_entries.py"
+  ],
+  "phase2_tables": ["app_users", "sessions", "clickup_connections", "time_entries"],
+  "clickup_write_allowed_files": ["backend/src/scarlet_scribe/connectors/clickup/oauth.py"],
+  "max_file_bytes": 1048576
+}

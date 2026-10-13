@@ -1,1 +1,28 @@
+# Segredos (o .env.example é versionado)
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.ruff_cache/
+.mypy_cache/
+dist/
+build/
+
+# Node
+node_modules/
+*.tsbuildinfo
+
+# Claude Code (arquivos locais)
+.claude/settings.local.json
+.claude/logs/
+.claude/worktrees/
+
+# Sistema
+.DS_Store
+*.log
