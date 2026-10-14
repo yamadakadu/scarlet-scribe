@@ -184,6 +184,7 @@ class ClickUpTask(ClickUpModel):
     parent: StrId | None = None
     # 0 = tarefa comum, 1 = marco, outros = tipos customizados.
     custom_item_id: int | None = None
+    # Nem sempre vem. O mapper usa junto com a busca de origem (`archived=true`).
     archived: bool | None = None
     url: str | None = None
     team_id: StrId | None = None
@@ -199,9 +200,3 @@ class ClickUpTask(ClickUpModel):
     start_date: Millis = None
     due_date: Millis = None
     time_estimate: Millis = None
-
-
-class ClickUpTasksPage(ClickUpModel):
-    """Uma página de `GET /v2/team/{team_id}/task` (não tem `last_page`)."""
-
-    tasks: list[ClickUpTask] = Field(default_factory=list)

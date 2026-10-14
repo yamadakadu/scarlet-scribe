@@ -403,19 +403,24 @@ class ClickUpClient:
         date_updated_gt: int | None = None,
         space_ids: Sequence[str] | None = None,
         custom_items: Sequence[int] | None = None,
+        archived: bool = False,
     ) -> AsyncIterator[ClickUpTaskPage]:
         """`GET /v2/team/{team_id}/task`, página a página (100 tarefas, `page` a partir de 0).
 
         Envia `subtasks=true&include_closed=true`. A resposta não tem `last_page`
         documentado: a paginação para na primeira página com menos de 100 itens.
-        Não envia `archived` (com `archived=true` a API traz **só** as arquivadas).
 
         - `date_updated_gt`: Unix em ms (sync incremental).
         - `space_ids`: vira `space_ids[]` repetido.
         - `custom_items`: vira `custom_items[]` repetido (`0` = tarefa, `1` = marco).
+        - `archived`: `True` envia `archived=true`, que é um filtro de **só
+          arquivadas** (confirmado no spike). `False` (padrão) não envia o
+          parâmetro, e a API traz só as não arquivadas.
 
         Cada tarefa é validada isoladamente: as inválidas vão para
-        `ClickUpTaskPage.invalid` e não derrubam a página.
+        `ClickUpTaskPage.invalid` e não derrubam a página. Uma resposta sem a
+        chave `tasks` (ou com `null`) levanta `ClickUpResponseError`; só
+        `"tasks": []` encerra a paginação.
 
         Levanta `ClickUpPaginationError` se uma página começar pela mesma tarefa
         que a anterior (a API estaria ignorando `page`) ou se passar de
@@ -429,6 +434,8 @@ class ClickUpClient:
             base.append(("space_ids[]", str(space_id)))
         for item in custom_items or ():
             base.append(("custom_items[]", str(int(item))))
+        if archived:
+            base.append(("archived", "true"))
 
         previous_first_id: str | None = None
         for page in range(MAX_TASK_PAGES):
@@ -585,9 +592,12 @@ def _task_items(data: Any, path: str) -> list[Any]:
     """A lista `tasks` de uma página, sem validar cada item (isso é feito tarefa a tarefa)."""
     if not isinstance(data, dict):
         raise ClickUpResponseError(f"GET {path}: resposta não é um objeto JSON", path=path)
+    # Só `"tasks": []` encerra a paginação. Sem a chave (ou com `null`), a
+    # resposta está fora do formato: tratar como página vazia faria uma listagem
+    # `full` parecer completa com 0 tarefas e apagar tudo na reconciliação.
     items = data.get("tasks")
     if items is None:
-        return []
+        raise ClickUpResponseError(f"GET {path}: resposta sem `tasks`", path=path)
     if not isinstance(items, list):
         raise ClickUpResponseError(f"GET {path}: `tasks` não é uma lista", path=path)
     return items

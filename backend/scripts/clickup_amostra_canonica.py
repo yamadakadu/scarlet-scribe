@@ -78,7 +78,11 @@ def fmt_dt(value: datetime | None) -> str:
 
 def print_report(title: str, report: ListingReport) -> None:
     stats = report.to_stats()
-    print(f"  {title}: completa={stats['complete']} | erros={stats['errors']} | descartados={stats['discarded']}")
+    print(f"  {title}: modo={stats['mode']} | completa={stats['complete']} | "
+          f"autoriza exclusões={stats['allows_deletions']} | erros={stats['errors']} | "
+          f"descartados={stats['discarded']}")
+    for name, part in report.parts.items():
+        print(f"    busca {name}: terminou={part.finished}  recebidas={part.received}")
     for issue in report.errors:
         print(f"    erro: {issue.resource} {issue.external_id or ''} status={issue.status_code} — {issue.reason}")
     for issue in report.discarded:
@@ -105,7 +109,7 @@ def print_tree(containers: list[Container], mask: Masker) -> None:
 def print_task(task: Task, mask: Masker) -> None:
     print(f"    {task.external_id}  nome={mask(task.name)}")
     print(f"      container={task.external_container_id}  pai={task.external_parent_id}  "
-          f"is_milestone={task.is_milestone}")
+          f"is_milestone={task.is_milestone}  archived={task.archived}")
     print(f"      status={task.status!r}  status_type={task.status_type!r}  priority={task.priority!r}")
     print(f"      start={fmt_dt(task.start_date)}  due={fmt_dt(task.due_date)}  done={fmt_dt(task.done_at)}  "
           f"atualizada={fmt_dt(task.source_updated_at)}")
@@ -159,15 +163,19 @@ async def run(args: argparse.Namespace) -> int:
                 if batches >= args.max_lotes:
                     print(f"\n(iteração interrompida pelo script após {batches} lote(s): --max-lotes)")
                     break
-            print(f"\n[Tarefas] {len(tasks)} em {batches} lote(s); marcos: {sum(t.is_milestone for t in tasks)}; "
-                  f"subtarefas: {sum(t.external_parent_id is not None for t in tasks)}")
+            print(f"\n[Tarefas] {len(tasks)} em {batches} lote(s); arquivadas: {sum(t.archived for t in tasks)}; "
+                  f"marcos: {sum(t.is_milestone for t in tasks)}; "
+                  f"subtarefas: {sum(t.external_parent_id is not None for t in tasks)}; "
+                  f"ids repetidos: {len(tasks) - len({t.external_id for t in tasks})}")
             print(f"  status_type: {dict(Counter(t.status_type for t in tasks))}")
             print(f"  containers das tarefas na estrutura: "
                   f"{sum(t.external_container_id in {c.external_id for c in containers} for t in tasks)}/{len(tasks)}")
             for task in tasks[: args.max_tarefas]:
                 print_task(task, mask)
             print_report("Tarefas", listing.report)
-            counters = {k: v for k, v in listing.report.to_stats().items() if not k.endswith("_details")}
+            counters = {
+                k: v for k, v in listing.report.to_stats().items() if not k.endswith("_details") and k != "parts"
+            }
             print(f"  stats para o sync: {counters}")
     except ConnectorError as exc:
         print(f"Erro do conector: {type(exc).__name__}: {exc}", file=sys.stderr)

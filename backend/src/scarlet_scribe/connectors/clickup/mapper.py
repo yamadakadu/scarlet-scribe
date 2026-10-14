@@ -8,9 +8,14 @@ Regras (ver `ARCHITECTURE.md` › "Mapeamento ClickUp → modelo canônico"):
   `folder:<id>`, `list:<id>`), também em `external_parent_id` e em
   `Task.external_container_id`. Ids de tarefa e de pessoa não levam prefixo.
 - Árvore: space é raiz; folder tem como pai o `parent_folder` ou, sem ele, o
-  space; list em folder tem como pai a folder; list fora de folder tem como
-  pai o space. O container de uma tarefa é sempre a list (a `folder` de uma
-  tarefa com `hidden = true` não é uma folder de verdade).
+  space; list em folder tem como pai a folder; list fora de folder (vinda de
+  `GET /space/{id}/list`, `folderless=True`) tem como pai o space, seja qual
+  for o `folder` do payload. O container de uma tarefa é sempre a list (a
+  `folder` de uma tarefa com `hidden = true` não é uma folder de verdade).
+- `Task.archived` é `True` se a tarefa veio da busca com `archived=true`
+  (filtro de "só arquivadas") **ou** se o payload traz `archived: true`. O
+  payload não desmarca: `archived: false` numa tarefa da busca de arquivadas
+  continua `True`, porque o filtro da busca é o dado confirmado no spike.
 - `raw` = `model_dump(by_alias=True, mode="json", exclude_unset=True)` do
   schema: nomes do JSON, extras incluídos, sem campos que não vieram. Só entra
   o payload do registro; nada de headers nem de credenciais.
@@ -182,14 +187,19 @@ def map_list(
     workspace_id: str,
     space_id: str | None = None,
     folder_id: str | None = None,
+    folderless: bool = False,
 ) -> Container:
     """List: pai é a folder (list em folder) ou o space (list fora de folder).
 
-    `folder_id` é a folder que está sendo percorrida (`GET /folder/{id}/list`).
-    Sem ele, usa `lst.folder`, desde que não seja a folder oculta (`hidden =
-    true`) das lists fora de folder; nesse caso, o pai é o space.
+    - `folderless=True`: a list veio de `GET /space/{id}/list` (fora de folder).
+      O pai é o space, e `lst.folder` é ignorado (com ou sem `hidden`).
+    - `folder_id`: a folder que está sendo percorrida (`GET /folder/{id}/list`).
+    - Sem nenhum dos dois, usa `lst.folder`, desde que não seja a folder oculta
+      (`hidden = true`) das lists fora de folder; nesse caso, o pai é o space.
     """
-    if folder_id is None and lst.folder is not None and not lst.folder.hidden:
+    if folderless and folder_id is not None:
+        raise ValueError("folderless=True não combina com folder_id")
+    if not folderless and folder_id is None and lst.folder is not None and not lst.folder.hidden:
         folder_id = lst.folder.id
     if folder_id:
         parent = folder_ref(folder_id)
@@ -216,9 +226,11 @@ def is_milestone(task: ClickUpTask) -> bool:
     return task.custom_item_id == MILESTONE_CUSTOM_ITEM_ID
 
 
-def map_task(task: ClickUpTask) -> Task:
+def map_task(task: ClickUpTask, *, archived: bool = False) -> Task:
     """Tarefa canônica. Levanta `MappingError` se uma data não converter.
 
+    - `archived=True`: a tarefa veio da busca com `archived=true`. O resultado
+      é `archived or task.archived` (ver a regra no topo do módulo).
     - O container é sempre a list (`list:<id>`), nunca a `folder` da tarefa.
     - `priority` vira o rótulo (`urgent`, `high`...) ou `None`.
     - `status_type` é repassado como vem (`open`, `custom`, `done`, `closed`...).
@@ -239,6 +251,7 @@ def map_task(task: ClickUpTask) -> Task:
         time_estimate_ms=task.time_estimate,
         url=task.url,
         is_milestone=is_milestone(task),
+        archived=archived or task.archived is True,
         source_updated_at=ms_to_datetime(task.date_updated, field="date_updated"),
         external_container_id=list_ref(task.list_.id) if task.list_ is not None else None,
         external_parent_id=task.parent or None,
