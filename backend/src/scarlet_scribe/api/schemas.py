@@ -139,6 +139,7 @@ class ContainerRef(ApiModel):
 class TaskRef(ApiModel):
     id: uuid.UUID
     name: str
+    archived: bool
 
 
 class TaskOut(ApiModel):
@@ -155,6 +156,7 @@ class TaskOut(ApiModel):
     time_estimate_ms: int | None
     url: str | None
     is_milestone: bool
+    archived: bool = Field(description="Arquivada na origem")
     source_updated_at: UtcDatetime | None = Field(
         description="Última alteração na origem (usada por order_by=updated_at)"
     )

@@ -87,8 +87,14 @@ def task_filters(
     due_to: datetime | None = None,
     is_milestone: bool | None = None,
     include_closed: bool = False,
+    archived: bool | None = False,
     q: str | None = None,
 ) -> list[ColumnElement[bool]]:
+    """Condições do `WHERE` de uma listagem de tarefas.
+
+    `archived=False` (padrão) traz só as ativas, `True` só as arquivadas e
+    `None` não filtra.
+    """
     conditions: list[ColumnElement[bool]] = [TaskRow.deleted_at.is_(None)]
     if container_id is not None:
         conditions.append(TaskRow.container_id.in_(container_subtree_ids(container_id)))
@@ -113,6 +119,8 @@ def task_filters(
         conditions.append(TaskRow.due_date <= due_to)
     if is_milestone is not None:
         conditions.append(TaskRow.is_milestone.is_(is_milestone))
+    if archived is not None:
+        conditions.append(TaskRow.archived.is_(archived))
     if not include_closed:
         conditions.append(
             or_(
@@ -143,7 +151,7 @@ TASK_LOAD_OPTIONS = (
         ContainerRow.id, ContainerRow.kind, ContainerRow.name, ContainerRow.deleted_at
     ),
     selectinload(TaskRow.parent).load_only(
-        TaskRow.id, TaskRow.name, TaskRow.deleted_at
+        TaskRow.id, TaskRow.name, TaskRow.archived, TaskRow.deleted_at
     ),
     selectinload(TaskRow.assignees).load_only(
         PersonRow.id, PersonRow.username, PersonRow.email, PersonRow.deleted_at
@@ -171,6 +179,7 @@ def task_out(row: TaskRow) -> TaskOut:
         time_estimate_ms=row.time_estimate_ms,
         url=row.url,
         is_milestone=row.is_milestone,
+        archived=row.archived,
         source_updated_at=row.source_updated_at,
         container=(
             ContainerRef.model_validate(container)

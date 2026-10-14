@@ -59,6 +59,10 @@ async def list_tasks(
     include_closed: Annotated[
         bool, Query(description="Inclui as tarefas com status_type 'done' ou 'closed'")
     ] = False,
+    archived: Annotated[
+        bool,
+        Query(description="false (padrão): só as tarefas ativas; true: só as arquivadas"),
+    ] = False,
     q: Annotated[
         str | None, Query(description="Busca no nome, sem diferenciar maiúsculas")
     ] = None,
@@ -81,6 +85,7 @@ async def list_tasks(
                 due_to=due_to,
                 is_milestone=is_milestone,
                 include_closed=include_closed,
+                archived=archived,
                 q=q,
             )
         )
@@ -96,7 +101,11 @@ async def list_tasks(
     responses={404: {"model": ErrorDetail, "description": "Tarefa inexistente"}},
 )
 async def get_task(session: SessionDep, task_id: uuid.UUID) -> TaskDetail:
-    """Detalhe da tarefa, com assignees e subtarefas (inclusive as encerradas)."""
+    """Detalhe da tarefa, com assignees e subtarefas.
+
+    Devolve a tarefa mesmo arquivada. As subtarefas incluem as encerradas e as
+    arquivadas, cada uma com o seu `archived`.
+    """
     row = await session.scalar(
         select(TaskRow)
         .where(TaskRow.id == task_id, TaskRow.deleted_at.is_(None))

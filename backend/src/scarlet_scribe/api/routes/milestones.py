@@ -34,7 +34,8 @@ async def list_milestones(
         ),
     ] = None,
 ) -> TaskPage:
-    """Mesmos padrões de `GET /tasks`: marcos encerrados ficam de fora."""
+    """Mesmos padrões de `GET /tasks`: marcos encerrados ficam de fora, e os
+    arquivados nunca aparecem."""
     stmt = (
         select(TaskRow)
         .where(
@@ -43,6 +44,7 @@ async def list_milestones(
                 due_from=due_from,
                 due_to=due_to,
                 is_milestone=True,
+                archived=False,
             )
         )
         .order_by(*task_order(TaskOrder.DUE_DATE))
