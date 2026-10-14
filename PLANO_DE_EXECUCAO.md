@@ -113,6 +113,7 @@ Pontos levantados pelo Revisor na onda 1, que os agentes das próximas tarefas d
   - o upsert envia `synced_at = now()` e `deleted_at = NULL` explicitamente, para que um registro que reaparece perca o soft delete;
   - `sync_state.updated_at` vai no `set_` do upsert, porque o `onupdate` não vale para `on_conflict_do_update`;
   - quando o id externo do pai ou do container muda (por exemplo, uma subtarefa que vira tarefa), o `parent_id`/`container_id` antigo precisa ser limpo;
+  - a reconciliação de tarefas só marca exclusões se a estrutura do mesmo run veio completa, e considera vistas as tarefas das três buscas (padrão, arquivadas e marcos) e as descartadas;
   - o agendador usa `ON CONFLICT DO NOTHING` contra o índice único parcial de `sync_runs`;
   - em processos que chamam `asyncio.run` mais de uma vez, fazer `dispose` do engine em cache.
 - **F1-08 (Portal):**
