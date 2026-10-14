@@ -64,7 +64,8 @@ backend/src/scarlet_scribe/
   db/                    # engine/sessão async, modelos SQLAlchemy (tabelas)
   domain/                # modelos canônicos (Pydantic), independentes de ferramenta
   connectors/
-    base.py              # protocolo Connector
+    base.py              # protocolo Connector, StructureSnapshot, TaskListing, ListingReport, FetchIssue e as exceções ConnectorError/AuthError/ConfigError
+    factory.py           # create_connector(settings): único ponto por onde o sync obtém um conector
     clickup/
       client.py          # cliente HTTP (httpx): auth, paginação, rate limit, retries
       schemas.py         # modelos Pydantic do JSON do ClickUp (só usados aqui dentro)
@@ -113,8 +114,9 @@ Entry points no `pyproject.toml`: a API roda com `uvicorn scarlet_scribe.api.app
 | `POSTGRES_DB` | `scarlet_scribe` | Nome do banco |
 | `POSTGRES_PORT` | `5432` | Porta do Postgres exposta no host |
 | `API_PORT` | `8000` | Porta da API exposta no host |
+| `FRONTEND_PORT` | `5173` | Porta do frontend (Vite) exposta no host |
 
-Mudar `POSTGRES_PASSWORD`, `POSTGRES_DB` ou `POSTGRES_PORT` exige ajustar também o `DATABASE_URL`, que é o usado fora do Docker.
+Mudar `POSTGRES_PASSWORD`, `POSTGRES_DB` ou `POSTGRES_PORT` exige ajustar também o `DATABASE_URL`, que é o usado fora do Docker. Os serviços `migrate`, `api` e `worker` usam uma única imagem do backend, `<projeto>-backend`.
 
 **Fase 2:**
 
@@ -248,7 +250,7 @@ Fonte: a referência oficial em <https://developer.clickup.com/reference>, consu
 
 | Dado | Endpoint | Detalhes da documentação e como usamos |
 |---|---|---|
-| Usuário dono do token | `GET /v2/user` | Retorna `id`, `username`, `email`, timezone e outros dados. Com o token do bot, valida o token no início do sync. Com o token OAuth, identifica a pessoa no callback |
+| Usuário dono do token | `GET /v2/user` | Retorna `id`, `username`, `email`, timezone e outros dados. Com o token do bot, não é chamado: o `GET /v2/team` já valida o token (um 401 ali faz o sync falhar). Com o token OAuth, identifica a pessoa no callback |
 | Workspaces e membros | `GET /v2/team` | Retorna `teams[]`, e cada item traz `id`, `name` e `members[].user`. Com o token do bot, **é a fonte das `people`**. Com o token OAuth, confirma no callback que `CLICKUP_TEAM_ID` foi autorizado. A documentação não mostra, mas o spike confirmou que `members[].user` traz `role`, `role_key` (por exemplo `owner`), `role_subtype` e `custom_role` |
 | Troca do código OAuth (Fase 2) | `POST /v2/oauth/token` | A única chamada não-GET do sistema. Não altera dados do ClickUp: só obtém o token da pessoa. Envia `client_id`, `client_secret` e `code` |
 | Spaces | `GET /v2/team/{team_id}/space?archived=false` | |
@@ -262,7 +264,8 @@ Fonte: a referência oficial em <https://developer.clickup.com/reference>, consu
 - Retorna **100 tarefas por página**, com `page` começando em 0.
 - A documentação não lista `last_page` neste endpoint, mas **o spike viu a chave na resposta**. Como não foi possível avaliar se ela é confiável (havia uma página só), o cliente continua parando quando uma página volta com menos de 100 tarefas.
 - Por padrão, subtarefas e tarefas fechadas ficam de fora. Por isso enviamos `subtasks=true&include_closed=true`.
-- Quando `CLICKUP_SPACE_IDS` está definido, enviamos também `space_ids[]` com esses spaces.
+- Quando `CLICKUP_SPACE_IDS` está definido, enviamos também `space_ids[]` com esses spaces. Um space configurado que o token não enxerga vira erro da estrutura, e a estrutura fica sempre parcial até a variável ser corrigida.
+- Não enviamos `archived`. Fazemos também uma busca extra com `custom_items[]=1` (cerca de uma página a mais por sync), unida à padrão sem duplicar, até ficar confirmado que a busca padrão traz os marcos. Ela é ligada por `FETCH_MILESTONES_SEPARATELY` em `connectors/clickup/connector.py`.
 - Filtros úteis:
   - `date_updated_gt` e `date_updated_lt`, para o sync incremental;
   - `order_by` (`id`, `created`, `updated` ou `due_date`) e `reverse`;
@@ -380,6 +383,12 @@ Os passos rodam em ordem. Cada um faz commit próprio, então uma falha num pass
 3. **Tarefas, reconciliação completa:** roda a cada `SYNC_FULL_RECONCILE_HOURS` e no primeiro sync. Busca todas as tarefas e marca com `deleted_at` as que não voltaram. Esse passo é necessário porque o modo incremental não detecta exclusões. **Quando a reconciliação roda, ela substitui o passo 2** naquele sync, para não buscar as tarefas duas vezes, e o watermark avança do mesmo jeito.
 
 **Exclusões só com listagem completa (passos 1 e 3):** um registro só ganha `deleted_at` se a listagem daquele passo terminou sem nenhum erro. Se alguma chamada falhou (página no meio da paginação, 403/404 num space ou folder, timeout), o passo grava os upserts normalmente, **não marca nenhuma exclusão** e registra `deletions_skipped: true` em `stats`. Sem essa regra, uma falha parcial apagaria dados que continuam existindo no ClickUp.
+
+Como o conector informa isso (`connectors/base.py`):
+- `fetch_structure()` devolve um `StructureSnapshot` (workspace, pessoas, containers em ordem de pai para filho, inclusive subfolders, e um `report`). Uma folder cujo pai não veio na resposta sai no fim, e esse pai pode não existir no banco.
+- `iter_tasks(updated_since=...)` devolve lotes de tarefas; o `report` é lido no fim da iteração.
+- Uma listagem é completa quando `report.complete` é verdadeiro: a iteração terminou, não houve erros e todo descartado tem id. Os ids em `report.discarded_ids` (tarefas com dados inválidos) contam como vistos na reconciliação. `report.to_stats()` vai para `stats`.
+- Exceções: `fetch_structure` levanta `ConnectorError` (inclusive `ConnectorAuthError` no 401) quando o workspace não pode ser lido, e o run termina `failed`. Na iteração das tarefas, só 401 e erro de configuração saem como exceção; 403/404 num recurso, 5xx persistente, paginação quebrada ou resposta fora do formato deixam a listagem parcial.
 4. **(Fase 2) Horas, uma vez por conexão `active`:** roda para todas as conexões, até `SYNC_TIME_ENTRIES_CONCURRENCY` pessoas em paralelo. Para cada pessoa:
    - decifra o token e cria um cliente próprio, que tem seu próprio rate limit;
    - busca a janela `[agora − SYNC_TIME_ENTRIES_WINDOW_DAYS, agora]` em `GET /v2/team/{team_id}/time_entries`, **sem `assignee`**. Na primeira vez dessa pessoa, a janela usa `SYNC_BACKFILL_DAYS`;

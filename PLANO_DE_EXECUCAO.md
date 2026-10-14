@@ -106,9 +106,10 @@ Pontos levantados pelo Revisor na onda 1, que os agentes das próximas tarefas d
 
 - **F1-06 (Conector):**
   - o `external_id` dos containers leva o nível como prefixo (`space:123`, `folder:456`, `list:789`), também em `external_parent_id` e `external_container_id` (ver `ARCHITECTURE.md` › "Mapeamento");
-  - o `raw` deve ser o payload original, sem as conversões dos schemas;
+  - o `raw` é gerado com `model_dump(by_alias=True, mode="json", exclude_unset=True)`, como diz o `ARCHITECTURE.md` (decisão do Maestro, recomendada pelo Revisor);
   - uma data inválida numa tarefa não pode derrubar a página inteira.
 - **F1-07 (Sincronista):**
+  - use o conector só por `create_connector(settings)` e capture `ConnectorError` em `fetch_structure` (run `failed`); a interface está em `ARCHITECTURE.md` › "Sincronização";
   - o upsert envia `synced_at = now()` e `deleted_at = NULL` explicitamente, para que um registro que reaparece perca o soft delete;
   - `sync_state.updated_at` vai no `set_` do upsert, porque o `onupdate` não vale para `on_conflict_do_update`;
   - quando o id externo do pai ou do container muda (por exemplo, uma subtarefa que vira tarefa), o `parent_id`/`container_id` antigo precisa ser limpo;
@@ -146,10 +147,10 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 | F1-03 | integrado | Branch `conector/cliente-http` (8e4ca77, 1d807ac), integrada em d0dd46a |
 | F1-04 | integrado | Script integrado (6c0fe59). Pendentes: tarefas arquivadas e marcos, porque o workspace testado não tem nenhum dos dois |
 | F1-05 | integrado | Branch `arquivista/modelos-fase1` (d07ffd7, aa47dfd), integrada em 3823108 |
-| F1-06 | em andamento | |
+| F1-06 | integrado | Branch `conector/mapper` (ae19032, ccdca5b, 37a6397). Sugestões S1-S5 do Revisor aguardando o Carlos |
 | F1-07 | pendente | |
 | F1-08 | em andamento | |
 | F1-09a | integrado | Branch `vitrine/scaffold` (f90301a, 1282231), integrada em 358dda4 |
 | F1-09b | pendente | |
-| F1-12 | em andamento | |
+| F1-12 | integrado | Branch `alicerce/frontend-compose` (55d6e05). Pendente: ver `api` e `worker` subindo, o que depende da F1-07 e da F1-08 (fica para a F1-11) |
 | F1-11 | pendente | |
