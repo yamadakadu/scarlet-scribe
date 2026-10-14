@@ -26,7 +26,7 @@ Fase 2: **Guardião** (login LDAP e sessões) e **Ponte** (OAuth e conexão com 
 1. **Fronteiras de arquivos:** cada agente só altera a própria área. Se precisar de algo de outra área (por exemplo, o Portal precisar de um campo novo numa tabela), pede ao Maestro, que repassa ao dono da área.
 2. **Branches e commits:**
    - Cada agente trabalha num git worktree próprio, na branch **`<agente>/<feature>`**, por exemplo `conector/cliente-http` ou `arquivista/modelos-fase1`.
-   - Antes de acionar o agente, o Maestro cria o worktree com `python3 .claude/scripts/novo_worktree.py <agente> <feature>`. O worktree fica em `.claude/worktrees/<agente>-<feature>`, sai da `main` e recebe um symlink `.env` para o `.env` da raiz principal, que não existe nos worktrees por estar fora do git. O agente entra nele com `EnterWorktree` (parâmetro `path`).
+   - Antes de acionar o agente, o Maestro cria o worktree com `python3 .claude/scripts/novo_worktree.py <agente> <feature>`. O worktree fica em `.claude/worktrees/<agente>-<feature>`, sai da `main` e recebe um symlink `.env` para o `.env` da raiz principal, que não existe nos worktrees por estar fora do git. O agente trabalha nele com caminhos absolutos e `git -C <worktree>`: um subagente disparado da raiz não consegue trocar de diretório com `EnterWorktree`.
    - O worktree parte do último commit da `main`: mudanças ainda não commitadas na `main` não aparecem nele.
    - O assunto de cada commit começa com o nome da branch: `conector/cliente-http: adiciona retries com backoff`.
    - Os agentes fazem commits livremente na própria branch.
@@ -100,6 +100,25 @@ As regras acima são impostas por hooks. A política está em `.claude/hooks/pol
 | 5 | F1-09b (Vitrine) | Precisa do OpenAPI da F1-08 |
 | 6 | F1-11 (Maestro + Carlos) | Encerramento da Fase 1 |
 
+### Notas das revisões para as próximas tarefas
+
+Pontos levantados pelo Revisor na onda 1, que os agentes das próximas tarefas devem seguir:
+
+- **F1-06 (Conector):**
+  - o `external_id` dos containers leva o nível como prefixo (`space:123`, `folder:456`, `list:789`), também em `external_parent_id` e `external_container_id` (ver `ARCHITECTURE.md` › "Mapeamento");
+  - o `raw` deve ser o payload original, sem as conversões dos schemas;
+  - uma data inválida numa tarefa não pode derrubar a página inteira.
+- **F1-07 (Sincronista):**
+  - o upsert envia `synced_at = now()` e `deleted_at = NULL` explicitamente, para que um registro que reaparece perca o soft delete;
+  - `sync_state.updated_at` vai no `set_` do upsert, porque o `onupdate` não vale para `on_conflict_do_update`;
+  - quando o id externo do pai ou do container muda (por exemplo, uma subtarefa que vira tarefa), o `parent_id`/`container_id` antigo precisa ser limpo;
+  - o agendador usa `ON CONFLICT DO NOTHING` contra o índice único parcial de `sync_runs`;
+  - em processos que chamam `asyncio.run` mais de uma vez, fazer `dispose` do engine em cache.
+- **F1-08 (Portal):**
+  - toda consulta filtra `deleted_at IS NULL`;
+  - `include_closed=false` exclui as tarefas com `status_type` `done` ou `closed`;
+  - `order_by=updated_at` usa a coluna `source_updated_at`.
+
 ## Fase 2: autenticação e horas (à parte)
 
 Só começa depois da F1-11. Esta tabela é uma visão prévia e será detalhada quando a Fase 2 for liberada.
@@ -124,13 +143,13 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 |---|---|---|
 | F1-01 | integrado | Branch `alicerce/monorepo` (3941f53, 1fd9d44, 54e5ee1), integrada na `main` em 525c114 |
 | F1-02 | pendente | Aguardando o token do bot |
-| F1-03 | pendente | |
+| F1-03 | integrado | Branch `conector/cliente-http` (8e4ca77, 1d807ac), integrada em d0dd46a |
 | F1-04 | pendente | |
-| F1-05 | pendente | |
+| F1-05 | integrado | Branch `arquivista/modelos-fase1` (d07ffd7, aa47dfd), integrada em 3823108 |
 | F1-06 | pendente | |
 | F1-07 | pendente | |
 | F1-08 | pendente | |
-| F1-09a | pendente | |
+| F1-09a | integrado | Branch `vitrine/scaffold` (f90301a, 1282231), integrada em 358dda4 |
 | F1-09b | pendente | |
 | F1-12 | pendente | |
 | F1-11 | pendente | |

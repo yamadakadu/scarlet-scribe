@@ -139,6 +139,14 @@ Mudar `POSTGRES_PASSWORD`, `POSTGRES_DB` ou `POSTGRES_PORT` exige ajustar també
 
 O arquivo `.env.example`, na raiz, documenta essas variáveis. O `.env` real fica na raiz do repositório e no `.gitignore`; o `config.py` o encontra pela própria posição, de qualquer diretório.
 
+**Só do frontend** (lida pelo Vite, que não lê o `.env` da raiz; só os arquivos `frontend/.env*` e o ambiente do processo):
+
+| Variável | Padrão | Uso |
+|---|---|---|
+| `VITE_API_PROXY_TARGET` | `http://localhost:8000` | Destino do proxy de `/api/` no servidor de desenvolvimento. No Docker Compose: `http://api:8000` |
+
+Variáveis `VITE_*` ficam visíveis no bundle do navegador: nenhuma delas pode carregar segredo.
+
 Em desenvolvimento, o **Vite faz proxy de `/api` para o backend**, desde a Fase 1. Assim o front e a API ficam na mesma origem, e não há configuração de CORS. Na Fase 2, isso também faz o cookie de sessão e o callback do OAuth funcionarem sem ajustes.
 
 ## Autenticação de usuários (LDAP) (Fase 2)
@@ -221,13 +229,16 @@ A resposta de erro é sempre um 401 genérico ("usuário ou senha inválidos"), 
   - A documentação só garante esses headers na resposta de erro.
   - A unidade do `Reset` não é dita, apenas "Unix timestamp". Na prática deve ser em segundos.
   - **No spike:** verificar se os headers vêm também nas respostas 200 e qual a unidade do `Reset`.
-- Com base nisso, o cliente faz um controle preventivo: limita a si mesmo a 100 req/min por padrão, com valor configurável. Quando os headers aparecerem numa resposta, ele os usa para ajustar o ritmo.
+- Com base nisso, o cliente faz um controle preventivo: limita a si mesmo a 100 req/min por padrão, com valor configurável. Quando os headers aparecem numa resposta, ele os usa para ajustar o ritmo, mas **só para baixo**: o limite efetivo é o menor entre `CLICKUP_RATE_LIMIT_PER_MINUTE` e `X-RateLimit-Limit`. Num plano com limite maior, o ritmo sobe aumentando a variável. Uma resposta com `X-RateLimit-Remaining` zerado faz as chamadas seguintes esperarem até o `Reset`.
 - Retries com backoff exponencial e jitter (até 5 tentativas):
-  - **HTTP 429:** espera até o `X-RateLimit-Reset`. Se o valor for maior que 10¹², trata como milissegundos. Sem o header, usa backoff.
+  - **HTTP 429:** espera até o `X-RateLimit-Reset`. Se o valor for maior que 10¹², trata como milissegundos. A espera tem teto de 90 s, contra relógio dessincronizado ou valor estranho, e nunca é menor que o backoff da tentativa, para o caso de o `Reset` já estar no passado. Sem o header, usa backoff.
   - **HTTP 5xx, timeout ou erro de rede:** backoff 1s, 2s, 4s, 8s...
   - **HTTP 401 com o token do bot:** sem retry. O run falha com a mensagem "token do bot inválido ou revogado".
   - **(Fase 2) HTTP 401 com o token de uma pessoa:** sem retry. A conexão dela vira `revoked` e o sync continua com as outras pessoas.
   - **HTTP 403 ou 404 num recurso específico:** sem retry. O recurso é registrado como erro do passo e o sync segue para o próximo.
+  - **Outros erros do httpx que não são de rede** (por exemplo, corpo corrompido ou redirect inesperado): sem retry, viram um erro do cliente do ClickUp. Nenhuma exceção do httpx sai do cliente.
+- **Paginação de tarefas:** além de parar na página curta, o cliente tem um teto de 1000 páginas (100 mil tarefas) e detecta uma página que repete a anterior (a API estaria ignorando `page`). Nos dois casos, levanta um erro em vez de terminar em silêncio.
+- **`raw`:** o mapper gera o `raw` a partir do schema com `model_dump(by_alias=True, mode="json", exclude_unset=True)`. Ele preserva os nomes e os campos extras do JSON, mas não é uma cópia exata: datas em ms já vêm como inteiros e ids como texto.
 
 ### Endpoints de leitura do ClickUp
 
@@ -311,7 +322,7 @@ Fonte: a referência oficial em <https://developer.clickup.com/reference>, consu
 | Canônico | Origem no ClickUp | Notas |
 |---|---|---|
 | `Workspace` | team | |
-| `Container` | space / folder / list | Árvore com `kind` (`space`, `folder` ou `list`) e `parent_id`. A UI chama de "projeto" |
+| `Container` | space / folder / list | Árvore com `kind` (`space`, `folder` ou `list`) e `parent_id`. A UI chama de "projeto". **O `external_id` leva o nível como prefixo** (`space:123`, `folder:456`, `list:789`), porque o ClickUp não garante que ids de níveis diferentes sejam distintos. O mesmo vale para `containers.external_parent_id` e `tasks.external_container_id`. O id original continua no `raw` |
 | `Person` | membro do team (`user.id`, `username`, `email`) | |
 | `Task` | task | `name`, `status.status` e o tipo do status, `priority`, `start_date`, `due_date`, `date_done`, `time_estimate`, assignees, list (container), `parent` (subtarefa), `url`, `is_milestone`, `date_updated`. O id da list e o id do pai ficam também como ids externos, porque o container ou a tarefa-pai podem não estar no banco (ver "Banco de dados"). Um assignee que não está nos members do team vira uma `Person` com os dados que vêm na própria tarefa (`id`, `username`, `email`) |
 | `TimeEntry` (Fase 2) | time entry, buscada com o token da pessoa | `user` → person (deve ser sempre o dono do token; se vier outro, a entrada é descartada e o caso vai para o log), `task.id` → task (pode ser nulo), `start`, `end`, `duration`, `billable`, `description`. Uma duração negativa indica timer em andamento: salva com `end=null` e `is_running=true`. Se a tarefa ainda não existir no banco (por exemplo, numa list que o bot não enxerga), `task_id` fica nulo e o id original fica guardado em `external_task_id` |
@@ -332,6 +343,17 @@ Tabelas da **Fase 1**:
 - `sync_runs`: `id`, `trigger` (`scheduled` | `manual`), `status` (`pending` | `running` | `succeeded` | `partial` | `failed`), `requested_at`, `started_at`, `finished_at`, `stats` (JSONB com contadores por entidade: criados, atualizados, removidos), `error`. Um **índice único parcial** garante no máximo um run `pending` ou `running` por vez (`CREATE UNIQUE INDEX ... ON sync_runs ((true)) WHERE status IN ('pending', 'running')`)
 - `sync_state`: o "watermark" de cada `(source, resource)`, por exemplo o último `date_updated` visto nas tarefas e a data da última reconciliação completa
 
+Colunas principais (além de `id`, `source`, `external_id`, `raw`, `synced_at` e `deleted_at` nas tabelas sincronizadas):
+- `workspaces`: `name`.
+- `containers`: `workspace_id` (obrigatório), `parent_id` e `external_parent_id`, `kind` e `name`.
+- `people`: `username` e `email`.
+- `tasks`: `name`, `status`, `status_type`, `priority` (rótulo em texto), `start_date`, `due_date`, `done_at` (de `date_done`), `time_estimate_ms`, `url`, `is_milestone`, `source_updated_at` (de `date_updated`; é a coluna usada por `order_by=updated_at`), `container_id` e `external_container_id`, `parent_id` e `external_parent_id`.
+- `task_assignees`: `task_id` e `person_id` (PK composta).
+- `sync_runs`: `status` com padrão `pending`, `requested_at` com padrão `now()`, `stats` com padrão `{}`.
+- `sync_state`: PK `(source, resource)`, `watermark`, `last_full_sync_at` e `updated_at`.
+
+`kind`, `trigger` e `status` são texto com `CHECK`, sem enum nativo do Postgres: um valor novo exige só trocar o `CHECK`.
+
 Tabelas da **Fase 2**, criadas numa migration própria:
 - `time_entries`, com `person_id`, `task_id` (pode ser nulo) e `external_task_id`
 - `app_users`: usuários da aplicação, vindos do LDAP. Campos: `id`, `ldap_username` (único), `ldap_dn`, `display_name`, `email`, `person_id` (FK para `people`, que pode ser nulo até a pessoa conectar o ClickUp), `created_at` e `last_login_at`. **Não é uma tabela sincronizada:** não tem `source` nem `external_id`
@@ -344,7 +366,7 @@ Tabelas da **Fase 2**, criadas numa migration própria:
   - `connected_at`, `last_synced_at` e `last_error`;
   - `identity_verified_at`, reservado para a etapa futura de verificação de identidade
 
-Índices principais: `tasks (due_date)`, `tasks (container_id)` e `tasks (is_milestone)`. Na Fase 2 entram também `time_entries (person_id, start)` e `time_entries (task_id)`.
+Índices principais: `tasks (due_date)`, `tasks (container_id)`, `tasks (is_milestone)`, `tasks (parent_id)` e `task_assignees (person_id)`. Na Fase 2 entram também `time_entries (person_id, start)` e `time_entries (task_id)`.
 
 ## Sincronização
 

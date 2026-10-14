@@ -10,7 +10,7 @@ The user writes in Portuguese. Reply in Portuguese.
 
 ## Current state and phases
 
-Phase 1 is under way; `PLANO_DE_EXECUCAO.md` › "Acompanhamento" has the status of each task. The repo is a monorepo: the Python package lives in `backend/` (uv project, `src/` layout) and `frontend/` will hold the Vite app. The infrastructure is in place: `config.py`, `docker-compose.yml` and Alembic, but no migrations yet. There is no application code yet.
+Phase 1 is under way; `PLANO_DE_EXECUCAO.md` › "Acompanhamento" has the status of each task. The repo is a monorepo: the Python package lives in `backend/` (uv project, `src/` layout) and `frontend/` holds the Vite app. Already integrated: the infrastructure (`config.py`, `docker-compose.yml`, Alembic), the ClickUp HTTP client and schemas (`connectors/clickup/`), the canonical models, Phase 1 tables and migration `0001` (`domain/`, `db/`), and the frontend scaffold (`frontend/`). The mapper, sync, API and real screens are still to come.
 
 Work happens in two phases:
 - **Phase 1 (initial structure):** the bot token, structure, tasks, milestones, sync, read API and frontend. It has **no login and no time entries**, and all routes are open.
@@ -70,4 +70,14 @@ uv run --directory backend alembic upgrade head    # apply migrations from the h
 docker compose down                                # stop everything (add -v to drop the database volume)
 ```
 
-`config.py` reads the `.env` at the repo root wherever the command runs; `.env.example` documents every variable. The `api` and `worker` services start once F1-08 and F1-07 create their modules. To be added later: `frontend/` npm scripts (F1-09a) and the full `docker compose up` (F1-12).
+Frontend (from `frontend/`):
+
+```bash
+npm ci                       # install exactly what package-lock.json pins
+npm run dev                  # Vite on :5173, proxying /api/ to VITE_API_PROXY_TARGET (default http://localhost:8000)
+npm run build                # type-check and build to dist/
+npm run typecheck            # tsc on both tsconfigs
+npm run lint                 # oxlint
+```
+
+`config.py` reads the `.env` at the repo root wherever the command runs; `.env.example` documents every variable. Vite does not read that file: `VITE_API_PROXY_TARGET` comes from the process environment or `frontend/.env*`. The `api` and `worker` services start once F1-08 and F1-07 create their modules. To be added later: the full `docker compose up` with the frontend (F1-12).
