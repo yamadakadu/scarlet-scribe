@@ -54,12 +54,19 @@ MAX_ATTEMPTS = 5
 BACKOFF_BASE_SECONDS = 1.0
 DEFAULT_RATE_LIMIT_PER_MINUTE = 100
 TASKS_PAGE_SIZE = 100
+# Teto de páginas de tarefas por chamada (1000 páginas = 100 mil tarefas). Protege
+# contra uma API que ignore `page` e devolva sempre páginas cheias.
+MAX_TASK_PAGES = 1000
 
 _RATE_WINDOW_SECONDS = 60.0
 # `X-RateLimit-Reset` acima disto é tratado como milissegundos.
 _RESET_MS_THRESHOLD = 10**12
 # Teto de espera por um `X-RateLimit-Reset` (a janela do ClickUp é de 1 minuto).
 _MAX_RESET_WAIT_SECONDS = 90.0
+
+# Erros do httpx que valem retry com backoff. `ProxyError` entra porque um proxy
+# indisponível se comporta como um 5xx. Os demais `httpx.RequestError` não têm retry.
+_TRANSIENT_NETWORK_ERRORS = (httpx.NetworkError, httpx.RemoteProtocolError, httpx.ProxyError)
 
 type Params = list[tuple[str, str]]
 type Sleep = Callable[[float], Awaitable[None]]
@@ -109,6 +116,10 @@ class ClickUpUnavailableError(ClickUpHTTPError):
     """5xx, timeout ou erro de rede persistente depois de todas as tentativas."""
 
 
+class ClickUpPaginationError(ClickUpError):
+    """A paginação não terminou: página repetida ou teto de páginas atingido."""
+
+
 # --- Autenticação ----------------------------------------------------------
 
 
@@ -149,7 +160,7 @@ def _int_header(headers: httpx.Headers, name: str) -> int | None:
         return None
     try:
         return int(float(value.strip()))
-    except ValueError:
+    except (ValueError, OverflowError):
         return None
 
 
@@ -322,22 +333,37 @@ class ClickUpClient:
 
         `date_updated_gt` é um Unix em ms (sync incremental). `space_ids` vira
         `space_ids[]` repetido.
+
+        Levanta `ClickUpPaginationError` se uma página começar pela mesma tarefa
+        que a anterior (a API estaria ignorando `page`) ou se passar de
+        `MAX_TASK_PAGES` páginas cheias. Nunca termina em silêncio nesses casos.
         """
+        path = f"/team/{team_id}/task"
         base: Params = [("subtasks", "true"), ("include_closed", "true")]
         if date_updated_gt is not None:
             base.append(("date_updated_gt", str(date_updated_gt)))
         for space_id in space_ids or ():
             base.append(("space_ids[]", str(space_id)))
 
-        page = 0
-        while True:
-            data = await self._get(f"/team/{team_id}/task", [*base, ("page", str(page))])
+        previous_first_id: str | None = None
+        for page in range(MAX_TASK_PAGES):
+            data = await self._get(path, [*base, ("page", str(page))])
             tasks = ClickUpTasksPage.model_validate(data).tasks
-            if tasks:
-                yield tasks
+            if not tasks:
+                return
+            if tasks[0].id == previous_first_id:
+                raise ClickUpPaginationError(
+                    f"GET {path}: a página {page} repete a página {page - 1} "
+                    "(a API parece ignorar `page`)"
+                )
+            previous_first_id = tasks[0].id
+            yield tasks
             if len(tasks) < TASKS_PAGE_SIZE:
                 return
-            page += 1
+        raise ClickUpPaginationError(
+            f"GET {path}: mais de {MAX_TASK_PAGES} páginas cheias "
+            f"({MAX_TASK_PAGES * TASKS_PAGE_SIZE} tarefas); paginação interrompida"
+        )
 
     # --- Núcleo: GET com rate limit e retries ------------------------------
 
@@ -365,7 +391,7 @@ class ClickUpClient:
                         path=path,
                     ) from None
                 reason = f"timeout ({type(exc).__name__})"
-            except httpx.TransportError as exc:
+            except _TRANSIENT_NETWORK_ERRORS as exc:
                 if last_attempt:
                     raise ClickUpUnavailableError(
                         f"GET {path}: erro de rede após {self._max_attempts} tentativas "
@@ -374,6 +400,15 @@ class ClickUpClient:
                         path=path,
                     ) from None
                 reason = f"erro de rede ({type(exc).__name__})"
+            except httpx.RequestError as exc:
+                # Não transitórios (DecodingError, TooManyRedirects, UnsupportedProtocol,
+                # LocalProtocolError...): repetir não resolve. Sem retry.
+                raise ClickUpHTTPError(
+                    f"GET {path}: falha na requisição ou na leitura da resposta "
+                    f"({type(exc).__name__})",
+                    status_code=None,
+                    path=path,
+                ) from None
             else:
                 self._limiter.observe(response.headers)
                 status = response.status_code
@@ -410,11 +445,14 @@ class ClickUpClient:
                             status_code=status,
                             path=path,
                         )
-                    wait = _seconds_until_reset(response.headers)
-                    if wait is None:
-                        wait = self._backoff(attempt)
+                    # Piso de backoff: com o relógio local adiantado, o `Reset` pode
+                    # já estar no passado, e as tentativas se esgotariam em segundos.
+                    backoff = self._backoff(attempt)
+                    reset_wait = _seconds_until_reset(response.headers)
+                    if reset_wait is None:
+                        wait = backoff
                     else:
-                        wait += random.uniform(0, 0.5)
+                        wait = max(reset_wait + random.uniform(0, 0.5), backoff)
                     # A espera fica no limitador: vale também para outras chamadas
                     # concorrentes com o mesmo token.
                     self._limiter.block_for(wait)

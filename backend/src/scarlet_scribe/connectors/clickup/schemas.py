@@ -4,8 +4,12 @@ Uso restrito a `connectors/clickup/`: o resto do sistema só conhece os modelos
 canônicos de `domain/`, produzidos pelo mapper.
 
 Os modelos declaram apenas os campos que usamos. A API manda muito mais, e
-`extra="allow"` preserva o restante (acessível por `model_dump()`), para que o
-payload original possa ir para colunas `raw` sem nova requisição.
+`extra="allow"` mantém o restante no modelo. Para a coluna `raw`, o mapper deve
+usar `model_dump(by_alias=True, mode="json", exclude_unset=True)`: volta aos nomes
+do JSON (`list`, `profilePicture`), não inventa campos que não vieram e inclui os
+extras. Não é uma cópia byte a byte: as normalizações abaixo (ms como `int`, ids
+como `str`) ficam aplicadas. Se um dia o `raw` precisar ser o JSON exato, o cliente
+terá de expor o dict original junto com o modelo.
 
 Datas e durações ficam em **milissegundos** (`int`), como vêm da API. A API
 manda esses valores ora como string, ora como número; aqui ambos viram `int`.
