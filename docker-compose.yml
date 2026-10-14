@@ -1,12 +1,18 @@
-# Ambiente de desenvolvimento local (Fase 1): postgres, api e worker.
-# O serviço frontend entra na F1-12.
+# Ambiente de desenvolvimento local (Fase 1): postgres, migrate, api, worker e
+# frontend.
 #
 # Os valores de banco têm padrão de desenvolvimento aqui mesmo, então o
 # postgres sobe sem .env. O .env da raiz (opcional) fornece o token do bot e
 # as demais variáveis; o DATABASE_URL abaixo aponta para o serviço postgres e
 # prevalece sobre o do .env dentro dos containers.
 
+# migrate, api e worker usam uma imagem só, com o nome do projeto do compose
+# (padrão: o nome do diretório). Com o mesmo `image` e o mesmo `build` nos três,
+# o `docker compose build` constrói a imagem uma vez e marca o resultado para os
+# três (conferido no Docker Compose v5.3.1), então um rebuild nunca deixa um
+# serviço com dependências diferentes dos outros.
 x-backend: &backend
+  image: ${COMPOSE_PROJECT_NAME}-backend
   build:
     context: .
     dockerfile: backend/Dockerfile
@@ -67,6 +73,27 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+
+  # Servidor de desenvolvimento do Vite, com HMR. O proxy de /api/ aponta para
+  # o serviço api. Não depende do api: o front sobe sozinho e, com a API fora
+  # do ar, o proxy responde com erro e a tela mostra "API indisponível".
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    environment:
+      VITE_API_PROXY_TARGET: http://api:8000
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    # O código vem do host (bind mount) para o HMR. O volume anônimo em
+    # /app/node_modules impede que o bind mount esconda as dependências da
+    # imagem. O compose reaproveita esse volume quando recria o container:
+    # depois de mudar o package-lock.json, use `docker compose up --build -V
+    # frontend` (-V renova os volumes anônimos), senão o node_modules antigo
+    # continua valendo.
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
 
 volumes:
   postgres_data:
