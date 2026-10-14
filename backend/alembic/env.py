@@ -13,16 +13,15 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import context
 from scarlet_scribe.config import get_settings
+from scarlet_scribe.db import Base  # importa também os modelos (db/models.py)
 
 config = context.config
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Metadata dos modelos para o autogenerate. Fica a cargo de quem cria as
-# tabelas (db/): por exemplo, `from scarlet_scribe.db.models import Base` e
-# `target_metadata = Base.metadata`.
-target_metadata = None
+# Metadata dos modelos (db/models.py), usada pelo autogenerate.
+target_metadata = Base.metadata
 
 
 def _database_url() -> str:
