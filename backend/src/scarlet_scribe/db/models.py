@@ -114,6 +114,11 @@ class TaskRow(SyncedMixin, Base):
     url: Mapped[str | None] = mapped_column(Text)
     is_milestone: Mapped[bool] = mapped_column(server_default=text("false"), index=True)
     source_updated_at: Mapped[datetime | None]
+    # Arquivada na origem. Sem índice de propósito: a listagem padrão
+    # (`archived = false`) pega quase todas as linhas, e um índice nessa
+    # coluna não seria usado pelo planner; a listagem das arquivadas é rara e
+    # pequena. Ver a migration 0002.
+    archived: Mapped[bool] = mapped_column(server_default=text("false"))
 
     container_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("containers.id", ondelete="SET NULL"), index=True
