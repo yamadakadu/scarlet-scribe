@@ -420,6 +420,10 @@ Todas as rotas usam o prefixo `/api/v1` e respondem em JSON, com datas em ISO 86
 **Erros:** formato padrão do FastAPI (`{ "detail": ... }`):
 - 404 para id inexistente;
 - 422 para parâmetro inválido;
+- 429 no cooldown do `POST /sync`;
+- 503 em qualquer rota quando o banco está inacessível (falha de conexão). Os outros erros de banco continuam 500, com traceback só no log.
+
+404, 429 e 503 usam o schema `ErrorDetail` (`{ "detail": "..." }`). O 404 vale só para o id no caminho; ids desconhecidos em filtros devolvem lista vazia. No OpenAPI, todos os campos de resposta são obrigatórios, e o `operationId` é o nome da função da rota (`list_tasks`, `request_sync`...), para o cliente TS gerado ter nomes limpos. A documentação interativa fica em `/api/v1/docs`.
 - (Fase 2) 401 sem sessão válida.
 
 **Acesso:**
@@ -441,16 +445,23 @@ Todas as rotas usam o prefixo `/api/v1` e respondem em JSON, com datas em ISO 86
 
 | Método e rota | Filtros (query) | Retorno |
 |---|---|---|
-| `GET /health` | — | Status da API, do banco e do último sync |
+| `GET /health` | — | `{ status, database, latest_sync }`, com `status` e `database` em `ok` ou `error`; 503 com o mesmo corpo quando o banco não responde |
 | `GET /projects` | `kind`, `parent_id` | Árvore space/folder/list, sem paginação |
-| `GET /people` | `q` | Members |
+| `GET /people` | `q` (busca em `username` ou `email`, sem diferenciar maiúsculas; `%` e `_` são literais) | Members, ordenados por `username` |
 | `GET /tasks` | `container_id`, `status`, `assignee_id`, `due_from`, `due_to`, `is_milestone`, `include_closed` (padrão `false`), `archived` (padrão `false`: só as ativas; `true`: só as arquivadas), `q` (busca no nome), `order_by` (`due_date`, `updated_at` ou `name`) | Lista paginada |
 | `GET /tasks/{id}` | — | Detalhe da tarefa, com assignees e subtarefas. (Fase 2) Ganha o total de horas, que soma **só as entradas sincronizadas**, ou seja, as das pessoas conectadas. Por isso vem acompanhado de `time_tracked_coverage`, que diz quantos assignees estão conectados. Enquanto a regra de visibilidade não for definida, mostra só o total, sem detalhar por pessoa |
 | `GET /milestones` | `container_id`, `due_from`, `due_to` (nunca inclui arquivadas) | Atalho para `GET /tasks?is_milestone=true`, ordenado por `due_date` |
 | (Fase 2) `GET /time-entries` | `task_id`, `container_id`, `from`, `to` | Lista paginada **das horas do usuário logado** |
 | (Fase 2) `GET /time-entries/summary` | `from`, `to` (obrigatórios), `group_by` (`container`, `task` ou `day`), filtros iguais aos de `GET /time-entries` | Totais de horas agrupados **do usuário logado** (`[{ key, label, total_ms }]`) |
 
-Registros com `deleted_at` preenchido nunca aparecem nas respostas.
+Registros com `deleted_at` preenchido nunca aparecem nas respostas (uma referência a um registro removido sai como `null`).
+
+Detalhes do contrato de leitura (decididos na F1-08):
+- **`/projects`:** sem filtros, os nós de primeiro nível com `children` aninhados; `parent_id` traz os filhos diretos daquele container, cada um com a sua subárvore; `kind` traz todos os nós daquele nível no escopo, cada um com a sua subárvore. `total` é o número de itens no primeiro nível. Um container cujo pai não está no banco vira raiz.
+- **`/tasks`:** `container_id` inclui as tarefas de toda a subárvore; `status` pode ser repetido, ignora maiúsculas e valores vazios; `due_from` e `due_to` são inclusivos e aceitam instante ISO 8601 ou data pura (`AAAA-MM-DD` vale meia-noite UTC em `due_from` e o fim do dia UTC em `due_to`; instante sem fuso é UTC); `include_closed=false` exclui `status_type` `done` e `closed` (sem `status_type`, a tarefa não conta como encerrada); `archived=false` (padrão) traz só as ativas e `true` só as arquivadas. Ordem padrão `due_date` crescente com nulos no fim; `updated_at` usa `source_updated_at` decrescente; `name` ignora maiúsculas; o `id` desempata.
+- **Formato da tarefa:** `container: { id, kind, name } | null`, `parent_id`, `assignees`, `archived`, `source_updated_at` e os demais campos. O detalhe acrescenta `parent: { id, name, archived } | null` e `subtasks` (filhas diretas, inclusive encerradas e arquivadas).
+- **`/milestones`:** nunca traz arquivadas nem encerradas; para ver os marcos encerrados, use `/tasks?is_milestone=true&include_closed=true`.
+- **`/sync/runs/latest`:** 200 com `null` quando ainda não houve run.
 
 **(Fase 2) Visibilidade das horas:** cada pessoa vê **só as próprias horas**. Ver as horas de outras pessoas, com filtro `person_id` e `group_by=person`, depende de uma regra de permissão que ainda não foi definida, por exemplo um grupo LDAP de gestores. Ver "Riscos". Os parâmetros ficam reservados até essa decisão.
 
@@ -459,7 +470,7 @@ Registros com `deleted_at` preenchido nunca aparecem nas respostas.
 | Método e rota | Comportamento |
 |---|---|
 | `POST /sync` | Pede um sync manual. As verificações seguem esta ordem: (1) se já houver um run `pending` ou `running`, devolve **200** com esse run, e o front só passa a acompanhá-lo; (2) senão, se o `requested_at` do último run manual foi há menos de `SYNC_MANUAL_COOLDOWN_SECONDS`, responde **429** com `Retry-After` igual aos segundos que faltam; (3) senão, cria o run e devolve **202** com ele (`pending`). Se a inserção bater no índice único parcial de `sync_runs` (dois pedidos ao mesmo tempo), devolve **200** com o run que já existe |
-| `GET /sync/runs/latest` | O run mais recente, que o front consulta a cada ~2 s enquanto ele estiver `pending` ou `running` |
+| `GET /sync/runs/latest` | O run mais recente (ou `null`), que o front consulta a cada ~2 s enquanto ele estiver `pending` ou `running` |
 | `GET /sync/runs` | Histórico paginado dos runs |
 
 O sync manual sincroniza tudo: estrutura e tarefas e, na Fase 2, as horas de todas as pessoas conectadas. Não existe sync "só das minhas horas".

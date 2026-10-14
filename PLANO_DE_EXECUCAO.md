@@ -151,8 +151,8 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 | F1-05 | integrado | Branch `arquivista/modelos-fase1` (d07ffd7, aa47dfd), integrada em 3823108 |
 | F1-06 | integrado | Branch `conector/mapper` (ae19032, ccdca5b, 37a6397). Sugestões S1-S5 do Revisor aguardando o Carlos |
 | F1-07 | em andamento | |
-| F1-08 | em andamento | |
+| F1-08 | integrado | Branch `portal/rotas-leitura` (828f1d3 a b326de7, com os ajustes aprovados e o filtro `archived`) |
 | F1-09a | integrado | Branch `vitrine/scaffold` (f90301a, 1282231), integrada em 358dda4 |
-| F1-09b | pendente | |
+| F1-09b | em andamento | |
 | F1-12 | integrado | Branch `alicerce/frontend-compose` (55d6e05). Pendente: ver `api` e `worker` subindo, o que depende da F1-07 e da F1-08 (fica para a F1-11) |
 | F1-11 | pendente | |
