@@ -1,10 +1,11 @@
-# Contexto de build = raiz do repositório. Só o backend/ (e, mais tarde, o
-# frontend/) entra nas imagens; segredos e artefatos locais ficam de fora.
+# Contexto de build = raiz do repositório. Só o backend/ e o frontend/ entram
+# nas imagens; segredos e artefatos locais (inclusive frontend/node_modules e
+# frontend/dist) ficam de fora.
 .git
 .claude
 .githooks
-.env
-.env.*
+**/.env
+**/.env.*
 **/.venv
 **/__pycache__
 **/*.pyc

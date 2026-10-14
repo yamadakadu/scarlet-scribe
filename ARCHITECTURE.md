@@ -64,7 +64,8 @@ backend/src/scarlet_scribe/
   db/                    # engine/sessão async, modelos SQLAlchemy (tabelas)
   domain/                # modelos canônicos (Pydantic), independentes de ferramenta
   connectors/
-    base.py              # protocolo Connector
+    base.py              # protocolo Connector, StructureSnapshot, TaskListing, ListingReport, FetchIssue e as exceções ConnectorError/AuthError/ConfigError
+    factory.py           # create_connector(settings): único ponto por onde o sync obtém um conector
     clickup/
       client.py          # cliente HTTP (httpx): auth, paginação, rate limit, retries
       schemas.py         # modelos Pydantic do JSON do ClickUp (só usados aqui dentro)
@@ -113,8 +114,9 @@ Entry points no `pyproject.toml`: a API roda com `uvicorn scarlet_scribe.api.app
 | `POSTGRES_DB` | `scarlet_scribe` | Nome do banco |
 | `POSTGRES_PORT` | `5432` | Porta do Postgres exposta no host |
 | `API_PORT` | `8000` | Porta da API exposta no host |
+| `FRONTEND_PORT` | `5173` | Porta do frontend (Vite) exposta no host |
 
-Mudar `POSTGRES_PASSWORD`, `POSTGRES_DB` ou `POSTGRES_PORT` exige ajustar também o `DATABASE_URL`, que é o usado fora do Docker.
+Mudar `POSTGRES_PASSWORD`, `POSTGRES_DB` ou `POSTGRES_PORT` exige ajustar também o `DATABASE_URL`, que é o usado fora do Docker. Os serviços `migrate`, `api` e `worker` usam uma única imagem do backend, `<projeto>-backend`.
 
 **Fase 2:**
 
@@ -224,11 +226,11 @@ A resposta de erro é sempre um 401 genérico ("usuário ou senha inválidos"), 
   | Business Plus | 1.000 req/min |
   | Enterprise | 10.000 req/min |
 
-  O plano da empresa ainda precisa ser confirmado. O endpoint `getworkspaceplan` informa o plano, e o spike pode consultá-lo.
+  O plano é informado por `GET /v2/team/{team_id}/plan`, que responde `{plan_id, plan_name}` (confirmado no spike; o workspace de teste é Free Forever, `plan_id` 21, 100 req/min). O plano do workspace da empresa ainda precisa ser confirmado.
 - Ao estourar o limite, a API responde **HTTP 429**. Os headers são `X-RateLimit-Limit`, `X-RateLimit-Remaining` e `X-RateLimit-Reset`.
-  - A documentação só garante esses headers na resposta de erro.
-  - A unidade do `Reset` não é dita, apenas "Unix timestamp". Na prática deve ser em segundos.
-  - **No spike:** verificar se os headers vêm também nas respostas 200 e qual a unidade do `Reset`.
+  - **Confirmado no spike:** os três headers vêm também em todas as respostas 200.
+  - `X-RateLimit-Reset` é Unix em **segundos**. A janela parece fixa (de 60 s), não deslizante.
+  - `X-RateLimit-Remaining` não é estritamente decrescente entre chamadas seguidas: o contador do ClickUp parece ter consistência eventual. Por isso o cliente mantém também o próprio controle preventivo.
 - Com base nisso, o cliente faz um controle preventivo: limita a si mesmo a 100 req/min por padrão, com valor configurável. Quando os headers aparecem numa resposta, ele os usa para ajustar o ritmo, mas **só para baixo**: o limite efetivo é o menor entre `CLICKUP_RATE_LIMIT_PER_MINUTE` e `X-RateLimit-Limit`. Num plano com limite maior, o ritmo sobe aumentando a variável. Uma resposta com `X-RateLimit-Remaining` zerado faz as chamadas seguintes esperarem até o `Reset`.
 - Retries com backoff exponencial e jitter (até 5 tentativas):
   - **HTTP 429:** espera até o `X-RateLimit-Reset`. Se o valor for maior que 10¹², trata como milissegundos. A espera tem teto de 90 s, contra relógio dessincronizado ou valor estranho, e nunca é menor que o backoff da tentativa, para o caso de o `Reset` já estar no passado. Sem o header, usa backoff.
@@ -248,11 +250,11 @@ Fonte: a referência oficial em <https://developer.clickup.com/reference>, consu
 
 | Dado | Endpoint | Detalhes da documentação e como usamos |
 |---|---|---|
-| Usuário dono do token | `GET /v2/user` | Retorna `id`, `username`, `email`, timezone e outros dados. Com o token do bot, valida o token no início do sync. Com o token OAuth, identifica a pessoa no callback |
-| Workspaces e membros | `GET /v2/team` | Retorna `teams[]`, e cada item traz `id`, `name` e `members[].user`. Com o token do bot, **é a fonte das `people`**. Com o token OAuth, confirma no callback que `CLICKUP_TEAM_ID` foi autorizado. A documentação não mostra o papel de cada membro |
+| Usuário dono do token | `GET /v2/user` | Retorna `id`, `username`, `email`, timezone e outros dados. Com o token do bot, não é chamado: o `GET /v2/team` já valida o token (um 401 ali faz o sync falhar). Com o token OAuth, identifica a pessoa no callback |
+| Workspaces e membros | `GET /v2/team` | Retorna `teams[]`, e cada item traz `id`, `name` e `members[].user`. Com o token do bot, **é a fonte das `people`**. Com o token OAuth, confirma no callback que `CLICKUP_TEAM_ID` foi autorizado. A documentação não mostra, mas o spike confirmou que `members[].user` traz `role`, `role_key` (por exemplo `owner`), `role_subtype` e `custom_role` |
 | Troca do código OAuth (Fase 2) | `POST /v2/oauth/token` | A única chamada não-GET do sistema. Não altera dados do ClickUp: só obtém o token da pessoa. Envia `client_id`, `client_secret` e `code` |
 | Spaces | `GET /v2/team/{team_id}/space?archived=false` | |
-| Folders | `GET /v2/space/{space_id}/folder?archived=false` | Subfolders vêm na mesma lista, sem aninhamento, cada uma com `parent_folder`. O mapper monta a árvore a partir desse campo |
+| Folders | `GET /v2/space/{space_id}/folder?archived=false` | Subfolders vêm na mesma lista, sem aninhamento, cada uma com `parent_folder`. O mapper monta a árvore a partir desse campo. No spike, `parent_folder` veio **ausente** numa folder sem pai (formato com pai ainda não observado). A resposta já traz as `lists` de cada folder embutidas, o que pode economizar as chamadas a `/folder/{id}/list` |
 | Lists em folders | `GET /v2/folder/{folder_id}/list?archived=false` | |
 | Lists fora de folders | `GET /v2/space/{space_id}/list?archived=false` | |
 | Tarefas | `GET /v2/team/{team_id}/task` | Ver os detalhes logo abaixo da tabela |
@@ -260,9 +262,10 @@ Fonte: a referência oficial em <https://developer.clickup.com/reference>, consu
 
 **Tarefas (`GET /v2/team/{team_id}/task`, "Get Filtered Team Tasks"):**
 - Retorna **100 tarefas por página**, com `page` começando em 0.
-- **A resposta deste endpoint não tem `last_page`.** O campo só existe em `GET /v2/list/{list_id}/task`. Por isso, o cliente para de paginar quando uma página volta com menos de 100 tarefas.
+- A documentação não lista `last_page` neste endpoint, mas **o spike viu a chave na resposta**. Como não foi possível avaliar se ela é confiável (havia uma página só), o cliente continua parando quando uma página volta com menos de 100 tarefas.
 - Por padrão, subtarefas e tarefas fechadas ficam de fora. Por isso enviamos `subtasks=true&include_closed=true`.
-- Quando `CLICKUP_SPACE_IDS` está definido, enviamos também `space_ids[]` com esses spaces.
+- Quando `CLICKUP_SPACE_IDS` está definido, enviamos também `space_ids[]` com esses spaces. Um space configurado que o token não enxerga vira erro da estrutura, e a estrutura fica sempre parcial até a variável ser corrigida.
+- A busca padrão não envia `archived`; as arquivadas vêm da busca extra com `archived=true` descrita acima. Fazemos também uma busca extra com `custom_items[]=1` (cerca de uma página a mais por sync), unida à padrão sem duplicar, até ficar confirmado que a busca padrão traz os marcos. Ela é ligada por `FETCH_MILESTONES_SEPARATELY` em `connectors/clickup/connector.py`.
 - Filtros úteis:
   - `date_updated_gt` e `date_updated_lt`, para o sync incremental;
   - `order_by` (`id`, `created`, `updated` ou `due_date`) e `reverse`;
@@ -273,7 +276,8 @@ Fonte: a referência oficial em <https://developer.clickup.com/reference>, consu
   - `parent`, `custom_fields` e `include_markdown_description`.
 - Todas as datas são em ms, inteiros de 64 bits.
 - Cada tarefa traz `custom_fields` só com os campos aplicáveis ao seu `custom_item_id`.
-- A documentação não fala de tarefas arquivadas neste endpoint. O endpoint por list aceita `archived`. **No spike:** verificar se tarefas arquivadas aparecem.
+- **`archived=true` é um filtro de "só arquivadas"**, tanto aqui quanto em `GET /v2/list/{list_id}/task` (confirmado no spike: sem o parâmetro, todas as tarefas vieram com `archived: false`; com ele, só as arquivadas). **Decisão (Carlos, 2026-10-14): as tarefas arquivadas ficam disponíveis, separadas das ativas.** Por isso o sync faz, nos dois modos, uma busca extra com `archived=true` (mesmos filtros, cerca de uma página a mais), e as tarefas que vêm dela são gravadas com `archived = true`. Na reconciliação, uma tarefa vista em qualquer das buscas (padrão, arquivadas ou marcos) conta como vista; assim, arquivar não vira `deleted_at`. O comportamento com uma tarefa arquivada de verdade ainda não foi observado.
+- Formatos observados no spike: datas como string numérica e `null` frequente (inclusive `due_date` e `date_done`); `priority` como objeto ou `null`, com `priority.id` em string; `status.type` com `open` e `custom` (além de `done` e `closed`, pela documentação); tarefas de lists fora de folder trazem `folder.hidden = true` (essa referência não é uma folder de verdade); e chaves como `locations` e `top_level_parent`, que por ora só vão para o `raw`.
 
 **Horas (Fase 2) (`GET /v2/team/{team_id}/time_entries`, "Get time entries within a date range"):**
 - Sem `assignee`, retorna as horas **do próprio dono do token**. Sem datas, o período padrão são os últimos 30 dias.
@@ -287,7 +291,7 @@ Fonte: a referência oficial em <https://developer.clickup.com/reference>, consu
 - **Não há paginação documentada.** Por isso dividimos o período em blocos (por exemplo, de 7 dias) para limitar o tamanho das respostas.
 - Uma duração negativa indica um timer em andamento.
 
-**Marcos:** confirmado. Um marco é uma tarefa com `custom_item_id = 1`, enquanto `0` é uma tarefa comum. Os marcos vêm pelo mesmo endpoint de tarefas e o mapper marca `is_milestone = (custom_item_id == 1)`. **No spike:** confirmar se a busca sem `custom_items[]` já traz os marcos. Se não trouxer, enviamos `custom_items[]=0&custom_items[]=1` e mais os tipos customizados que a empresa usa.
+**Marcos:** confirmado. Um marco é uma tarefa com `custom_item_id = 1`, enquanto `0` é uma tarefa comum. Os marcos vêm pelo mesmo endpoint de tarefas e o mapper marca `is_milestone = (custom_item_id == 1)`. **Ainda não confirmado se a busca sem `custom_items[]` traz os marcos:** o workspace de teste não tem nenhum marco (todas as tarefas vieram com `custom_item_id = 0`). Se não trouxer, enviamos `custom_items[]=0&custom_items[]=1` e mais os tipos customizados que a empresa usa.
 
 #### Úteis em versões futuras
 
@@ -306,7 +310,7 @@ Fonte: a referência oficial em <https://developer.clickup.com/reference>, consu
 | `GET /v2/list/{list_id}/member` e `GET /v2/task/{task_id}/member` | Quem tem acesso explícito a uma list ou tarefa | Não inclui acessos herdados |
 | Goals (`getgoals`, `getgoal`) | Metas e targets | Caminho a confirmar |
 | Views (`getteamviews`, `getviewtasks` e outros) | Views salvas e as tarefas de cada view | Caminho a confirmar |
-| `getworkspaceplan` e `getworkspaceseats` | Plano do workspace (define o rate limit) e assentos | Caminho a confirmar |
+| `GET /v2/team/{team_id}/plan` e `getworkspaceseats` | Plano do workspace (define o rate limit) e assentos | O caminho do plano foi confirmado no spike; o de assentos continua a confirmar |
 | `GET /v2/task/{task_id}/time` | Horas registradas numa tarefa | **Legado.** A documentação recomenda os endpoints de time tracking. Permissões não documentadas |
 
 #### Fora de escopo ou indisponíveis
@@ -347,7 +351,7 @@ Colunas principais (além de `id`, `source`, `external_id`, `raw`, `synced_at` e
 - `workspaces`: `name`.
 - `containers`: `workspace_id` (obrigatório), `parent_id` e `external_parent_id`, `kind` e `name`.
 - `people`: `username` e `email`.
-- `tasks`: `name`, `status`, `status_type`, `priority` (rótulo em texto), `start_date`, `due_date`, `done_at` (de `date_done`), `time_estimate_ms`, `url`, `is_milestone`, `source_updated_at` (de `date_updated`; é a coluna usada por `order_by=updated_at`), `container_id` e `external_container_id`, `parent_id` e `external_parent_id`.
+- `tasks`: `name`, `status`, `status_type`, `priority` (rótulo em texto), `start_date`, `due_date`, `done_at` (de `date_done`), `time_estimate_ms`, `url`, `is_milestone`, `source_updated_at` (de `date_updated`; é a coluna usada por `order_by=updated_at`), `archived` (booleano, padrão `false`), `container_id` e `external_container_id`, `parent_id` e `external_parent_id`.
 - `task_assignees`: `task_id` e `person_id` (PK composta).
 - `sync_runs`: `status` com padrão `pending`, `requested_at` com padrão `now()`, `stats` com padrão `{}`.
 - `sync_state`: PK `(source, resource)`, `watermark`, `last_full_sync_at` e `updated_at`.
@@ -378,7 +382,13 @@ Os passos rodam em ordem. Cada um faz commit próprio, então uma falha num pass
 2. **Tarefas, modo incremental:** `date_updated_gt = watermark − 5 min`. A margem cobre diferenças de relógio e atualizações concorrentes. Upsert de tudo o que vier, depois o watermark avança.
 3. **Tarefas, reconciliação completa:** roda a cada `SYNC_FULL_RECONCILE_HOURS` e no primeiro sync. Busca todas as tarefas e marca com `deleted_at` as que não voltaram. Esse passo é necessário porque o modo incremental não detecta exclusões. **Quando a reconciliação roda, ela substitui o passo 2** naquele sync, para não buscar as tarefas duas vezes, e o watermark avança do mesmo jeito.
 
-**Exclusões só com listagem completa (passos 1 e 3):** um registro só ganha `deleted_at` se a listagem daquele passo terminou sem nenhum erro. Se alguma chamada falhou (página no meio da paginação, 403/404 num space ou folder, timeout), o passo grava os upserts normalmente, **não marca nenhuma exclusão** e registra `deletions_skipped: true` em `stats`. Sem essa regra, uma falha parcial apagaria dados que continuam existindo no ClickUp.
+**Exclusões só com listagem completa (passos 1 e 3):** um registro só ganha `deleted_at` se a listagem daquele passo terminou sem nenhum erro. Se alguma chamada falhou (página no meio da paginação, 403/404 num space ou folder, timeout), o passo grava os upserts normalmente, **não marca nenhuma exclusão** e registra `deletions_skipped: true` em `stats`. Sem essa regra, uma falha parcial apagaria dados que continuam existindo no ClickUp. **Além disso, a reconciliação de tarefas (passo 3) só marca exclusões se a estrutura do mesmo run (passo 1) também veio completa** (decisão do Carlos, 2026-10-14): o endpoint de tarefas omite em silêncio as tarefas de spaces e folders que o token deixou de enxergar, então uma estrutura parcial pode conviver com uma listagem de tarefas que parece completa.
+
+Como o conector informa isso (`connectors/base.py`):
+- `fetch_structure()` devolve um `StructureSnapshot` (workspace, pessoas, containers em ordem de pai para filho, inclusive subfolders, e um `report`). Uma folder cujo pai não veio na resposta sai no fim, e esse pai pode não existir no banco.
+- `iter_tasks(updated_since=...)` devolve lotes de tarefas; o `report` é lido no fim da iteração.
+- Uma listagem é completa quando `report.complete` é verdadeiro: a iteração terminou, não houve erros e todo descartado tem id. Os ids em `report.discarded_ids` (tarefas com dados inválidos) contam como vistos na reconciliação. `report.to_stats()` vai para `stats`.
+- Exceções: `fetch_structure` levanta `ConnectorError` (inclusive `ConnectorAuthError` no 401) quando o workspace não pode ser lido, e o run termina `failed`. Na iteração das tarefas, só 401 e erro de configuração saem como exceção; 403/404 num recurso, 5xx persistente, paginação quebrada ou resposta fora do formato deixam a listagem parcial.
 4. **(Fase 2) Horas, uma vez por conexão `active`:** roda para todas as conexões, até `SYNC_TIME_ENTRIES_CONCURRENCY` pessoas em paralelo. Para cada pessoa:
    - decifra o token e cria um cliente próprio, que tem seu próprio rate limit;
    - busca a janela `[agora − SYNC_TIME_ENTRIES_WINDOW_DAYS, agora]` em `GET /v2/team/{team_id}/time_entries`, **sem `assignee`**. Na primeira vez dessa pessoa, a janela usa `SYNC_BACKFILL_DAYS`;
@@ -434,9 +444,9 @@ Todas as rotas usam o prefixo `/api/v1` e respondem em JSON, com datas em ISO 86
 | `GET /health` | — | Status da API, do banco e do último sync |
 | `GET /projects` | `kind`, `parent_id` | Árvore space/folder/list, sem paginação |
 | `GET /people` | `q` | Members |
-| `GET /tasks` | `container_id`, `status`, `assignee_id`, `due_from`, `due_to`, `is_milestone`, `include_closed` (padrão `false`), `q` (busca no nome), `order_by` (`due_date`, `updated_at` ou `name`) | Lista paginada |
+| `GET /tasks` | `container_id`, `status`, `assignee_id`, `due_from`, `due_to`, `is_milestone`, `include_closed` (padrão `false`), `archived` (padrão `false`: só as ativas; `true`: só as arquivadas), `q` (busca no nome), `order_by` (`due_date`, `updated_at` ou `name`) | Lista paginada |
 | `GET /tasks/{id}` | — | Detalhe da tarefa, com assignees e subtarefas. (Fase 2) Ganha o total de horas, que soma **só as entradas sincronizadas**, ou seja, as das pessoas conectadas. Por isso vem acompanhado de `time_tracked_coverage`, que diz quantos assignees estão conectados. Enquanto a regra de visibilidade não for definida, mostra só o total, sem detalhar por pessoa |
-| `GET /milestones` | `container_id`, `due_from`, `due_to` | Atalho para `GET /tasks?is_milestone=true`, ordenado por `due_date` |
+| `GET /milestones` | `container_id`, `due_from`, `due_to` (nunca inclui arquivadas) | Atalho para `GET /tasks?is_milestone=true`, ordenado por `due_date` |
 | (Fase 2) `GET /time-entries` | `task_id`, `container_id`, `from`, `to` | Lista paginada **das horas do usuário logado** |
 | (Fase 2) `GET /time-entries/summary` | `from`, `to` (obrigatórios), `group_by` (`container`, `task` ou `day`), filtros iguais aos de `GET /time-entries` | Totais de horas agrupados **do usuário logado** (`[{ key, label, total_ms }]`) |
 
@@ -482,13 +492,10 @@ docker-compose.yml  # postgres, api, worker, frontend
 1. **Horas de outras pessoas (decidido).** O filtro `assignee` com outros usuários em `GET /v2/team/{team_id}/time_entries` é restrito a **Owners e Admins**, e o bot não terá esse papel. **Decisão:** as horas vêm do token OAuth de cada pessoa, conectado após o login LDAP. Consequências:
    - as horas cobrem **só quem conectou** a conta, e a UI mostra essa cobertura;
    - os tokens OAuth dão acesso de escrita, porque o ClickUp não tem escopos. Por isso ficam criptografados em repouso, fora dos logs, e o código só usa GET.
-2. **Itens a verificar no spike com o token real:**
-   - se tarefas arquivadas aparecem em `GET /v2/team/{team_id}/task`;
-   - se marcos vêm sem o filtro `custom_items[]`;
-   - se os headers `X-RateLimit-*` aparecem nas respostas 200, e a unidade do `X-RateLimit-Reset`;
-   - qual é o plano do workspace.
-
-   Já resolvido pela documentação: `last_page` não existe nesse endpoint, então paramos quando a página tiver menos de 100 tarefas; e marco é `custom_item_id = 1`.
+2. **Spike (F1-04), feito em 2026-10-14 com o token do `.env`:**
+   - **Resolvido:** os headers `X-RateLimit-*` vêm nas respostas 200 e o `Reset` é em segundos; o plano sai de `GET /v2/team/{team_id}/plan`; `archived=true` traz só as arquivadas; nenhuma colisão de ids entre níveis na amostra (o prefixo de nível continua); `members[].user.role` existe.
+   - **Pendente:** se tarefas arquivadas aparecem na busca padrão e se os marcos vêm sem `custom_items[]`. O workspace testado não tem tarefa arquivada nem marco.
+   - **Ambiente de teste (decisão do Carlos, 2026-10-14):** o workspace usado no desenvolvimento é só de teste (Free Forever, um único membro, token de um usuário **Owner**). Isso é aceito durante o desenvolvimento. **Pré-requisito antes de qualquer uso real:** um usuário bot com papel Member ou Guest no workspace da empresa, sem acesso a horas de outras pessoas, e a confirmação do plano (rate limit) desse workspace.
 3. **Webhooks:** fora do MVP. A documentação diz que webhooks pertencem ao usuário que os cria, mas não diz qual papel é necessário para criá-los. Criar um webhook também é uma escrita.
 4. **Rate limit:** 100 req/min nos planos até Business, contados **por token**.
    - O token do bot cobre a estrutura e as tarefas. Um sync incremental típico gasta poucas dezenas de chamadas, e a reconciliação completa custa cerca de N/100 chamadas para N tarefas.

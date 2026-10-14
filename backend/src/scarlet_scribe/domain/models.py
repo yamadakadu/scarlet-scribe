@@ -76,6 +76,11 @@ class Task(SourceRecord):
     time_estimate_ms: int | None = None
     url: str | None = None
     is_milestone: bool = False
+    archived: bool = Field(
+        default=False,
+        description="Tarefa arquivada na origem. A API lista as ativas e as arquivadas em "
+        "separado (filtro `archived`)",
+    )
     source_updated_at: AwareDatetime | None = Field(
         default=None, description="Última alteração na origem; base do watermark do sync"
     )

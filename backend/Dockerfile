@@ -1,4 +1,5 @@
-# Imagem do backend, usada pelos serviços api e worker do docker-compose.yml.
+# Imagem do backend, usada pelos serviços migrate, api e worker do
+# docker-compose.yml (uma imagem só para os três).
 # Contexto de build: raiz do repositório (ver .dockerignore na raiz).
 FROM python:3.12-slim
 
