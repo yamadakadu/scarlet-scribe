@@ -265,7 +265,7 @@ Fonte: a referência oficial em <https://developer.clickup.com/reference>, consu
 - A documentação não lista `last_page` neste endpoint, mas **o spike viu a chave na resposta**. Como não foi possível avaliar se ela é confiável (havia uma página só), o cliente continua parando quando uma página volta com menos de 100 tarefas.
 - Por padrão, subtarefas e tarefas fechadas ficam de fora. Por isso enviamos `subtasks=true&include_closed=true`.
 - Quando `CLICKUP_SPACE_IDS` está definido, enviamos também `space_ids[]` com esses spaces. Um space configurado que o token não enxerga vira erro da estrutura, e a estrutura fica sempre parcial até a variável ser corrigida.
-- Não enviamos `archived`. Fazemos também uma busca extra com `custom_items[]=1` (cerca de uma página a mais por sync), unida à padrão sem duplicar, até ficar confirmado que a busca padrão traz os marcos. Ela é ligada por `FETCH_MILESTONES_SEPARATELY` em `connectors/clickup/connector.py`.
+- A busca padrão não envia `archived`; as arquivadas vêm da busca extra com `archived=true` descrita acima. Fazemos também uma busca extra com `custom_items[]=1` (cerca de uma página a mais por sync), unida à padrão sem duplicar, até ficar confirmado que a busca padrão traz os marcos. Ela é ligada por `FETCH_MILESTONES_SEPARATELY` em `connectors/clickup/connector.py`.
 - Filtros úteis:
   - `date_updated_gt` e `date_updated_lt`, para o sync incremental;
   - `order_by` (`id`, `created`, `updated` ou `due_date`) e `reverse`;
@@ -276,7 +276,7 @@ Fonte: a referência oficial em <https://developer.clickup.com/reference>, consu
   - `parent`, `custom_fields` e `include_markdown_description`.
 - Todas as datas são em ms, inteiros de 64 bits.
 - Cada tarefa traz `custom_fields` só com os campos aplicáveis ao seu `custom_item_id`.
-- **`archived=true` é um filtro de "só arquivadas"**, tanto aqui quanto em `GET /v2/list/{list_id}/task` (confirmado no spike: sem o parâmetro, todas as tarefas vieram com `archived: false`; com ele, só as arquivadas). Se a busca padrão exclui as arquivadas, a reconciliação completa marca com `deleted_at` uma tarefa que for arquivada. Ainda não confirmado com uma tarefa arquivada de verdade.
+- **`archived=true` é um filtro de "só arquivadas"**, tanto aqui quanto em `GET /v2/list/{list_id}/task` (confirmado no spike: sem o parâmetro, todas as tarefas vieram com `archived: false`; com ele, só as arquivadas). **Decisão (Carlos, 2026-10-14): as tarefas arquivadas ficam disponíveis, separadas das ativas.** Por isso o sync faz, nos dois modos, uma busca extra com `archived=true` (mesmos filtros, cerca de uma página a mais), e as tarefas que vêm dela são gravadas com `archived = true`. Na reconciliação, uma tarefa vista em qualquer das buscas (padrão, arquivadas ou marcos) conta como vista; assim, arquivar não vira `deleted_at`. O comportamento com uma tarefa arquivada de verdade ainda não foi observado.
 - Formatos observados no spike: datas como string numérica e `null` frequente (inclusive `due_date` e `date_done`); `priority` como objeto ou `null`, com `priority.id` em string; `status.type` com `open` e `custom` (além de `done` e `closed`, pela documentação); tarefas de lists fora de folder trazem `folder.hidden = true` (essa referência não é uma folder de verdade); e chaves como `locations` e `top_level_parent`, que por ora só vão para o `raw`.
 
 **Horas (Fase 2) (`GET /v2/team/{team_id}/time_entries`, "Get time entries within a date range"):**
@@ -351,7 +351,7 @@ Colunas principais (além de `id`, `source`, `external_id`, `raw`, `synced_at` e
 - `workspaces`: `name`.
 - `containers`: `workspace_id` (obrigatório), `parent_id` e `external_parent_id`, `kind` e `name`.
 - `people`: `username` e `email`.
-- `tasks`: `name`, `status`, `status_type`, `priority` (rótulo em texto), `start_date`, `due_date`, `done_at` (de `date_done`), `time_estimate_ms`, `url`, `is_milestone`, `source_updated_at` (de `date_updated`; é a coluna usada por `order_by=updated_at`), `container_id` e `external_container_id`, `parent_id` e `external_parent_id`.
+- `tasks`: `name`, `status`, `status_type`, `priority` (rótulo em texto), `start_date`, `due_date`, `done_at` (de `date_done`), `time_estimate_ms`, `url`, `is_milestone`, `source_updated_at` (de `date_updated`; é a coluna usada por `order_by=updated_at`), `archived` (booleano, padrão `false`), `container_id` e `external_container_id`, `parent_id` e `external_parent_id`.
 - `task_assignees`: `task_id` e `person_id` (PK composta).
 - `sync_runs`: `status` com padrão `pending`, `requested_at` com padrão `now()`, `stats` com padrão `{}`.
 - `sync_state`: PK `(source, resource)`, `watermark`, `last_full_sync_at` e `updated_at`.
@@ -444,9 +444,9 @@ Todas as rotas usam o prefixo `/api/v1` e respondem em JSON, com datas em ISO 86
 | `GET /health` | — | Status da API, do banco e do último sync |
 | `GET /projects` | `kind`, `parent_id` | Árvore space/folder/list, sem paginação |
 | `GET /people` | `q` | Members |
-| `GET /tasks` | `container_id`, `status`, `assignee_id`, `due_from`, `due_to`, `is_milestone`, `include_closed` (padrão `false`), `q` (busca no nome), `order_by` (`due_date`, `updated_at` ou `name`) | Lista paginada |
+| `GET /tasks` | `container_id`, `status`, `assignee_id`, `due_from`, `due_to`, `is_milestone`, `include_closed` (padrão `false`), `archived` (padrão `false`: só as ativas; `true`: só as arquivadas), `q` (busca no nome), `order_by` (`due_date`, `updated_at` ou `name`) | Lista paginada |
 | `GET /tasks/{id}` | — | Detalhe da tarefa, com assignees e subtarefas. (Fase 2) Ganha o total de horas, que soma **só as entradas sincronizadas**, ou seja, as das pessoas conectadas. Por isso vem acompanhado de `time_tracked_coverage`, que diz quantos assignees estão conectados. Enquanto a regra de visibilidade não for definida, mostra só o total, sem detalhar por pessoa |
-| `GET /milestones` | `container_id`, `due_from`, `due_to` | Atalho para `GET /tasks?is_milestone=true`, ordenado por `due_date` |
+| `GET /milestones` | `container_id`, `due_from`, `due_to` (nunca inclui arquivadas) | Atalho para `GET /tasks?is_milestone=true`, ordenado por `due_date` |
 | (Fase 2) `GET /time-entries` | `task_id`, `container_id`, `from`, `to` | Lista paginada **das horas do usuário logado** |
 | (Fase 2) `GET /time-entries/summary` | `from`, `to` (obrigatórios), `group_by` (`container`, `task` ou `day`), filtros iguais aos de `GET /time-entries` | Totais de horas agrupados **do usuário logado** (`[{ key, label, total_ms }]`) |
 
@@ -495,7 +495,7 @@ docker-compose.yml  # postgres, api, worker, frontend
 2. **Spike (F1-04), feito em 2026-10-14 com o token do `.env`:**
    - **Resolvido:** os headers `X-RateLimit-*` vêm nas respostas 200 e o `Reset` é em segundos; o plano sai de `GET /v2/team/{team_id}/plan`; `archived=true` traz só as arquivadas; nenhuma colisão de ids entre níveis na amostra (o prefixo de nível continua); `members[].user.role` existe.
    - **Pendente:** se tarefas arquivadas aparecem na busca padrão e se os marcos vêm sem `custom_items[]`. O workspace testado não tem tarefa arquivada nem marco.
-   - **Achado sobre o ambiente:** o workspace testado é Free Forever, tem um único membro e o token pertence a um usuário com papel **Owner**. O space em `CLICKUP_SPACE_IDS` está vazio. Isso não bate com a premissa de um bot só com leitura num workspace da empresa (ver o item 1 e "Decisões").
+   - **Ambiente de teste (decisão do Carlos, 2026-10-14):** o workspace usado no desenvolvimento é só de teste (Free Forever, um único membro, token de um usuário **Owner**). Isso é aceito durante o desenvolvimento. **Pré-requisito antes de qualquer uso real:** um usuário bot com papel Member ou Guest no workspace da empresa, sem acesso a horas de outras pessoas, e a confirmação do plano (rate limit) desse workspace.
 3. **Webhooks:** fora do MVP. A documentação diz que webhooks pertencem ao usuário que os cria, mas não diz qual papel é necessário para criá-los. Criar um webhook também é uma escrita.
 4. **Rate limit:** 100 req/min nos planos até Business, contados **por token**.
    - O token do bot cobre a estrutura e as tarefas. Um sync incremental típico gasta poucas dezenas de chamadas, e a reconciliação completa custa cerca de N/100 chamadas para N tarefas.
