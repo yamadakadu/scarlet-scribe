@@ -113,6 +113,7 @@ Pontos levantados pelo Revisor na onda 1, que os agentes das próximas tarefas d
   - o upsert envia `synced_at = now()` e `deleted_at = NULL` explicitamente, para que um registro que reaparece perca o soft delete;
   - `sync_state.updated_at` vai no `set_` do upsert, porque o `onupdate` não vale para `on_conflict_do_update`;
   - quando o id externo do pai ou do container muda (por exemplo, uma subtarefa que vira tarefa), o `parent_id`/`container_id` antigo precisa ser limpo;
+  - use `report.allows_deletions` (e não `complete`) para marcar exclusões; no incremental, avance o watermark só se `report.complete`;
   - a reconciliação de tarefas só marca exclusões se a estrutura do mesmo run veio completa, e considera vistas as tarefas das três buscas (padrão, arquivadas e marcos) e as descartadas;
   - o agendador usa `ON CONFLICT DO NOTHING` contra o índice único parcial de `sync_runs`;
   - em processos que chamam `asyncio.run` mais de uma vez, fazer `dispose` do engine em cache.
@@ -149,7 +150,7 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 | F1-04 | integrado | Script integrado (6c0fe59). Pendentes: tarefas arquivadas e marcos, porque o workspace testado não tem nenhum dos dois |
 | F1-05 | integrado | Branch `arquivista/modelos-fase1` (d07ffd7, aa47dfd), integrada em 3823108 |
 | F1-06 | integrado | Branch `conector/mapper` (ae19032, ccdca5b, 37a6397). Sugestões S1-S5 do Revisor aguardando o Carlos |
-| F1-07 | pendente | |
+| F1-07 | em andamento | |
 | F1-08 | em andamento | |
 | F1-09a | integrado | Branch `vitrine/scaffold` (f90301a, 1282231), integrada em 358dda4 |
 | F1-09b | pendente | |
