@@ -59,7 +59,11 @@ from scarlet_scribe.domain.models import Container, Task
 
 if TYPE_CHECKING:
     from scarlet_scribe.config import Settings
-    from scarlet_scribe.connectors.clickup.schemas import ClickUpSpace, ClickUpTask
+    from scarlet_scribe.connectors.clickup.schemas import (
+        ClickUpFolder,
+        ClickUpSpace,
+        ClickUpTask,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -190,11 +194,13 @@ class ClickUpConnector:
         sref = space_ref(space.id)
         self._add(containers, report, sref, partial(map_space, space, workspace_id=workspace_id))
 
-        folders = await self._call(report, "space", sref, self._client.get_folders(space.id))
-        for folder in folders or []:
+        raw_folders = await self._call(report, "space", sref, self._client.get_folders(space.id))
+        # Subfolders podem vir antes da pai: ordena para manter pai → filho.
+        folders = parents_first(raw_folders or [])
+        for folder in folders:
             build = partial(map_folder, folder, workspace_id=workspace_id, space_id=space.id)
             self._add(containers, report, folder_ref(folder.id), build)
-        for folder in folders or []:
+        for folder in folders:
             fref = folder_ref(folder.id)
             lists = await self._call(report, "folder", fref, self._client.get_folder_lists(folder.id))
             for lst in lists or []:
@@ -305,6 +311,46 @@ class ClickUpConnector:
             except ValidationError as exc:
                 _discard_task(report, task.id, validation_reason(exc))
         return batch
+
+
+def parents_first(folders: Sequence[ClickUpFolder]) -> list[ClickUpFolder]:
+    """Folders de um space em ordem topológica: a pai sempre antes da filha.
+
+    A API devolve subfolders na mesma lista, em qualquer ordem. Primeiro saem as
+    folders sem `parent_folder` e os descendentes delas; depois, as folders cujo
+    pai não veio na resposta (com os descendentes), mantendo o `parent_folder`
+    no mapeamento; por fim, o que sobrar (ciclos). Dentro de cada grupo, vale a
+    ordem da API.
+    """
+    by_id = {f.id: f for f in folders}
+    children: dict[str, list[ClickUpFolder]] = {}
+    for f in folders:
+        parent = f.parent_folder_id
+        if parent and parent != f.id:
+            children.setdefault(parent, []).append(f)
+
+    ordered: list[ClickUpFolder] = []
+    seen: set[str] = set()
+
+    def emit(root: ClickUpFolder) -> None:
+        stack = [root]
+        while stack:
+            f = stack.pop()
+            if f.id in seen:
+                continue
+            seen.add(f.id)
+            ordered.append(f)
+            stack.extend(reversed(children.get(f.id, [])))
+
+    for f in folders:
+        if not f.parent_folder_id:
+            emit(f)
+    for f in folders:
+        if f.parent_folder_id not in by_id:
+            emit(f)
+    for f in folders:
+        emit(f)
+    return ordered
 
 
 def _discard_task(report: ListingReport, task_id: str | None, reason: str) -> None:

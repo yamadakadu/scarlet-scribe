@@ -117,8 +117,12 @@ class ListingReport:
 class StructureSnapshot:
     """Estrutura de um workspace: o workspace, as pessoas e a árvore de containers.
 
-    `containers` vem em ordem de pai para filho (space, depois os folders, depois
-    as lists de cada space). `report.complete` diz se dá para marcar exclusões.
+    `containers` vem em ordem de pai para filho, space a space: o space, depois
+    as folders em ordem topológica (a pai sempre antes da filha, inclusive em
+    subfolders), depois as lists. Uma folder cujo pai não veio na listagem sai
+    depois das demais folders do space, com o `external_parent_id` preservado;
+    quem grava não deve supor que esse pai existe. `report.complete` diz se dá
+    para marcar exclusões.
     """
 
     workspace: Workspace
@@ -141,8 +145,10 @@ class TaskListing:
 
     O `report` é preenchido durante a iteração; leia-o depois do `async for`.
     Erros que deixam a listagem parcial **não** interrompem com exceção: a
-    iteração termina, e o erro fica em `report.errors`. Só `ConnectorAuthError`
-    (e erros de configuração) saem como exceção.
+    iteração termina, e o erro fica em `report.errors` (inclusive 5xx ou 429
+    persistentes e resposta fora do formato numa página). Na iteração das
+    tarefas, só `ConnectorAuthError` e `ConnectorConfigError` saem como
+    exceção. Para `fetch_structure`, que tem outro contrato, ver o protocolo.
     """
 
     def __init__(self, source: TaskBatchSource) -> None:
@@ -199,8 +205,18 @@ class Connector(Protocol):
     async def fetch_structure(self) -> StructureSnapshot:
         """Workspace, pessoas e containers. Sempre a listagem completa da estrutura.
 
-        403/404 num recurso vira erro em `report.errors` e a busca segue.
-        Levanta `ConnectorAuthError` em 401.
+        Erros num recurso abaixo do workspace (space, folder, list) **não** saem
+        como exceção: vão para `report.errors` e a estrutura fica parcial. Um
+        403/404 deixa a busca seguir; outros erros a interrompem ali.
+
+        Exceções (o sync trata todas como fatais: run `failed`):
+        - `ConnectorAuthError`: credencial inválida ou revogada (401);
+        - `ConnectorConfigError`: configuração ausente ou workspace não visível;
+        - `ConnectorError` (qualquer outra subclasse): o workspace e as pessoas
+          não puderam ser lidos (5xx, timeout ou 429 persistentes, resposta fora
+          do formato). Sem o workspace, não há o que gravar.
+
+        O chamador deve capturar `ConnectorError`, a base das três.
         """
         ...
 
