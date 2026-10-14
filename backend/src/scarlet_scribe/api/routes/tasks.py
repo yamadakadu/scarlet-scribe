@@ -15,7 +15,14 @@ from scarlet_scribe.api.queries import (
     task_out,
     task_ref,
 )
-from scarlet_scribe.api.schemas import TaskDetail, TaskOrder, TaskPage, UtcDatetime
+from scarlet_scribe.api.schemas import (
+    ErrorDetail,
+    TaskDetail,
+    TaskOrder,
+    TaskPage,
+    UtcDatetime,
+    UtcDatetimeEnd,
+)
 from scarlet_scribe.db.models import TaskRow
 
 router = APIRouter(tags=["tasks"])
@@ -38,10 +45,15 @@ async def list_tasks(
     ] = None,
     assignee_id: Annotated[uuid.UUID | None, Query(description="Pessoa responsável")] = None,
     due_from: Annotated[
-        UtcDatetime | None, Query(description="Prazo a partir deste instante (inclusive)")
+        UtcDatetime | None,
+        Query(description="Prazo a partir deste instante (inclusive); uma data pura vale meia-noite UTC"),
     ] = None,
     due_to: Annotated[
-        UtcDatetime | None, Query(description="Prazo até este instante (inclusive)")
+        UtcDatetimeEnd | None,
+        Query(
+            description="Prazo até este instante (inclusive); "
+            "uma data pura (AAAA-MM-DD) inclui o dia inteiro, até 23:59:59.999999 UTC"
+        ),
     ] = None,
     is_milestone: Annotated[bool | None, Query(description="Só marcos (true) ou só não marcos (false)")] = None,
     include_closed: Annotated[
@@ -81,7 +93,7 @@ async def list_tasks(
 @router.get(
     "/tasks/{task_id}",
     response_model=TaskDetail,
-    responses={404: {"description": "Tarefa inexistente"}},
+    responses={404: {"model": ErrorDetail, "description": "Tarefa inexistente"}},
 )
 async def get_task(session: SessionDep, task_id: uuid.UUID) -> TaskDetail:
     """Detalhe da tarefa, com assignees e subtarefas (inclusive as encerradas)."""

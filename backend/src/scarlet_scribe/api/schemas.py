@@ -4,12 +4,13 @@ A API expõe só os UUIDs internos; o id da ferramenta de origem nunca é
 chave. Todos os instantes saem em ISO 8601 UTC (sufixo `Z`).
 """
 
+import re
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time
 from enum import StrEnum
 from typing import Annotated, Any, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field
 
 from scarlet_scribe.domain.models import ContainerKind
 from scarlet_scribe.domain.sync import SyncStatus, SyncTrigger
@@ -24,9 +25,35 @@ def _to_utc(value: datetime) -> datetime:
 
 UtcDatetime = Annotated[datetime, AfterValidator(_to_utc)]
 
+_DATE_ONLY = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _end_of_day_if_date(value: object) -> object:
+    """Uma data pura (`AAAA-MM-DD`) vale até o último instante do dia, em UTC."""
+    if isinstance(value, str) and _DATE_ONLY.fullmatch(value.strip()):
+        return datetime.combine(date.fromisoformat(value.strip()), time.max, tzinfo=UTC)
+    return value
+
+
+# Fim de intervalo inclusivo: uma data com hora vale como veio; uma data pura
+# cobre o dia inteiro (até 23:59:59.999999 UTC). O início (`due_from`) usa
+# `UtcDatetime`, em que uma data pura vale meia-noite.
+UtcDatetimeEnd = Annotated[UtcDatetime, BeforeValidator(_end_of_day_if_date)]
+
 
 class ApiModel(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+    # Campos com valor padrão saem como obrigatórios no schema de resposta,
+    # porque a resposta sempre os traz (o cliente TS não os gera como opcionais).
+    model_config = ConfigDict(from_attributes=True, json_schema_serialization_defaults_required=True)
+
+
+# --- Erros ---------------------------------------------------------------------
+
+
+class ErrorDetail(ApiModel):
+    """Erro no formato padrão do FastAPI (por exemplo 404, 429 e 503)."""
+
+    detail: str
 
 
 # --- Paginação ---------------------------------------------------------------
@@ -74,7 +101,7 @@ class ProjectNode(ApiModel):
     parent_id: uuid.UUID | None = Field(
         description="Container pai; nulo no nível mais alto ou se o pai não está no banco"
     )
-    children: list["ProjectNode"] = Field(default_factory=list)
+    children: list["ProjectNode"]
 
 
 class ProjectTree(Page[ProjectNode]):

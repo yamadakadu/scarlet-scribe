@@ -72,6 +72,7 @@ async def list_projects(
             name=row.name,
             workspace_id=row.workspace_id,
             parent_id=row.parent_id,
+            children=[],
         )
         for row in rows.all()
     }

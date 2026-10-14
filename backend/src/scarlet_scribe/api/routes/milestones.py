@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from scarlet_scribe.api.deps import PaginationDep, SessionDep
 from scarlet_scribe.api.queries import TASK_LOAD_OPTIONS, paginate, task_filters, task_order, task_out
-from scarlet_scribe.api.schemas import TaskOrder, TaskPage, UtcDatetime
+from scarlet_scribe.api.schemas import TaskOrder, TaskPage, UtcDatetime, UtcDatetimeEnd
 from scarlet_scribe.db.models import TaskRow
 
 router = APIRouter(tags=["milestones"])
@@ -23,10 +23,15 @@ async def list_milestones(
         Query(description="Marcos desse container e dos containers abaixo dele"),
     ] = None,
     due_from: Annotated[
-        UtcDatetime | None, Query(description="Prazo a partir deste instante (inclusive)")
+        UtcDatetime | None,
+        Query(description="Prazo a partir deste instante (inclusive); uma data pura vale meia-noite UTC"),
     ] = None,
     due_to: Annotated[
-        UtcDatetime | None, Query(description="Prazo até este instante (inclusive)")
+        UtcDatetimeEnd | None,
+        Query(
+            description="Prazo até este instante (inclusive); "
+            "uma data pura (AAAA-MM-DD) inclui o dia inteiro, até 23:59:59.999999 UTC"
+        ),
     ] = None,
 ) -> TaskPage:
     """Mesmos padrões de `GET /tasks`: marcos encerrados ficam de fora."""

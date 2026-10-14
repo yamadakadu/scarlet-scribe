@@ -22,10 +22,19 @@ from scarlet_scribe.api.schemas import (
     TaskOut,
     TaskRef,
 )
-from scarlet_scribe.db.models import ContainerRow, PersonRow, TaskRow, task_assignees
+from scarlet_scribe.db.models import (
+    ContainerRow,
+    PersonRow,
+    SyncRunRow,
+    TaskRow,
+    task_assignees,
+)
 
 # Categorias de status que contam como tarefa encerrada.
 CLOSED_STATUS_TYPES = ("done", "closed")
+
+# Ordem dos runs de sync, do mais recente para o mais antigo (o id desempata).
+SYNC_RUNS_LATEST_FIRST = (SyncRunRow.requested_at.desc(), SyncRunRow.id.desc())
 
 
 def like_pattern(text: str) -> str:
@@ -83,8 +92,9 @@ def task_filters(
     conditions: list[ColumnElement[bool]] = [TaskRow.deleted_at.is_(None)]
     if container_id is not None:
         conditions.append(TaskRow.container_id.in_(container_subtree_ids(container_id)))
-    if status:
-        wanted = [s.lower() for s in status]
+    # Valores vazios (`?status=`) são ignorados, em vez de não casarem com nada.
+    wanted = [s.lower() for s in status or () if s.strip()]
+    if wanted:
         conditions.append(func.lower(TaskRow.status).in_(wanted))
     if assignee_id is not None:
         conditions.append(
@@ -183,6 +193,7 @@ def task_ref(row: TaskRow) -> TaskRef | None:
 
 __all__ = [
     "CLOSED_STATUS_TYPES",
+    "SYNC_RUNS_LATEST_FIRST",
     "TASK_LOAD_OPTIONS",
     "container_subtree_ids",
     "like_pattern",

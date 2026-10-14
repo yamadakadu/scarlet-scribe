@@ -7,25 +7,23 @@ worker. A API não fala com o ClickUp.
 import math
 
 from fastapi import APIRouter, HTTPException, Response, status
-from sqlalchemy import func, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.dialects.postgresql import insert
 
 from scarlet_scribe.api.deps import PaginationDep, SessionDep, SettingsDep
-from scarlet_scribe.api.queries import paginate
-from scarlet_scribe.api.schemas import SyncRunOut, SyncRunPage
+from scarlet_scribe.api.queries import SYNC_RUNS_LATEST_FIRST, paginate
+from scarlet_scribe.api.schemas import ErrorDetail, SyncRunOut, SyncRunPage
 from scarlet_scribe.db.models import SyncRunRow
 from scarlet_scribe.domain.sync import ACTIVE_SYNC_STATUSES, SyncTrigger
 
 router = APIRouter(prefix="/sync", tags=["sync"])
 
-_LATEST_FIRST = (SyncRunRow.requested_at.desc(), SyncRunRow.id.desc())
 
-
-def _active_run_stmt():
+def _active_run_stmt() -> Select[tuple[SyncRunRow]]:
     return (
         select(SyncRunRow)
         .where(SyncRunRow.status.in_(ACTIVE_SYNC_STATUSES))
-        .order_by(*_LATEST_FIRST)
+        .order_by(*SYNC_RUNS_LATEST_FIRST)
         .limit(1)
     )
 
@@ -38,6 +36,7 @@ def _active_run_stmt():
         200: {"model": SyncRunOut, "description": "Já existe um run pendente ou em execução"},
         202: {"description": "Run manual criado (status pending)"},
         429: {
+            "model": ErrorDetail,
             "description": "Cooldown do sync manual; o header Retry-After traz os segundos restantes",
             "headers": {"Retry-After": {"schema": {"type": "integer"}}},
         },
@@ -98,7 +97,7 @@ async def request_sync(
     existing = await session.scalar(_active_run_stmt())
     if existing is None:  # o run já terminou; devolve o mais recente
         existing = await session.scalar(
-            select(SyncRunRow).order_by(*_LATEST_FIRST).limit(1)
+            select(SyncRunRow).order_by(*SYNC_RUNS_LATEST_FIRST).limit(1)
         )
     return SyncRunOut.model_validate(existing)
 
@@ -106,7 +105,7 @@ async def request_sync(
 @router.get("/runs", response_model=SyncRunPage)
 async def list_sync_runs(session: SessionDep, page: PaginationDep) -> SyncRunPage:
     """Histórico dos runs, do mais recente para o mais antigo."""
-    stmt = select(SyncRunRow).order_by(*_LATEST_FIRST)
+    stmt = select(SyncRunRow).order_by(*SYNC_RUNS_LATEST_FIRST)
     rows, total = await paginate(session, stmt, page)
     return SyncRunPage(items=[SyncRunOut.model_validate(r) for r in rows], total=total)
 
@@ -114,5 +113,5 @@ async def list_sync_runs(session: SessionDep, page: PaginationDep) -> SyncRunPag
 @router.get("/runs/latest", response_model=SyncRunOut | None)
 async def get_latest_sync_run(session: SessionDep) -> SyncRunOut | None:
     """O run mais recente, ou `null` se nunca houve sync."""
-    latest = await session.scalar(select(SyncRunRow).order_by(*_LATEST_FIRST).limit(1))
+    latest = await session.scalar(select(SyncRunRow).order_by(*SYNC_RUNS_LATEST_FIRST).limit(1))
     return SyncRunOut.model_validate(latest) if latest is not None else None
