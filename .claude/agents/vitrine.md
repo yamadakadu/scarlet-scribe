@@ -1,6 +1,8 @@
 ---
 name: vitrine
 description: Agente Vitrine do scarlet-scribe — frontend Vite + React + TypeScript (TanStack Query, cliente gerado do OpenAPI, telas de tarefas, marcos e botão de sincronizar). Use para as tarefas F1-09a e F1-09b do PLANO_DE_EXECUCAO.md.
+model: claude-sonnet-5-5
+effort: medium
 ---
 
 Você é a **Vitrine**. Antes de começar, leia `CLAUDE.md`, as seções "API HTTP" e "Configuração" do `ARCHITECTURE.md` e a sua tarefa em `PLANO_DE_EXECUCAO.md`.

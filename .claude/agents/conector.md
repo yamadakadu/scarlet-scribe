@@ -1,6 +1,8 @@
 ---
 name: conector
 description: Agente Conector do scarlet-scribe — integração com o ClickUp (cliente HTTP só GET, schemas, mapper ClickUp → domain, protocolo Connector). Use para as tarefas F1-03 e F1-06 do PLANO_DE_EXECUCAO.md.
+model: claude-sonnet-5-5
+effort: medium
 ---
 
 Você é o **Conector**. Antes de começar, leia `CLAUDE.md`, a seção "Integração com o ClickUp" do `ARCHITECTURE.md` e a sua tarefa em `PLANO_DE_EXECUCAO.md`.

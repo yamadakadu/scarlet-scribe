@@ -45,6 +45,32 @@ Fase 2: **Guardião** (login LDAP e sessões) e **Ponte** (OAuth e conexão com 
 6. **Fase 1 não antecipa a Fase 2:** nada de login, sessões, OAuth ou horas.
 7. **Segredos:** o token do bot fica apenas no `.env` local, nunca em commits, logs ou relatórios.
 
+## Modelos e esforço dos agentes
+
+Decisão do Carlos (2026-10-14), para reduzir o consumo de tokens. O padrão de cada agente fica no cabeçalho do arquivo em `.claude/agents/` (`model` e `effort`). Os modelos usam o ID completo, que fixa a versão; os apelidos (`opus`, `sonnet`) mudariam de versão sozinhos.
+
+| Agente | Modelo padrão | Esforço padrão | Variação por tarefa (o Maestro passa no disparo) |
+|---|---|---|---|
+| Revisor | `claude-opus-5-5` | `high` | `medium` para re-revisão de uma correção pequena |
+| Sincronista | `claude-opus-5-5` | `high` | `medium` para ajustes depois da F1-07 |
+| Conector | `claude-sonnet-5-5` | `medium` | `high` para lógica nova de paginação ou reconciliação |
+| Portal | `claude-sonnet-5-5` | `medium` | `high` para mudança de contrato com regras novas |
+| Arquivista | `claude-sonnet-5-5` | `medium` | `high` para migration que transforma dados existentes |
+| Vitrine | `claude-sonnet-5-5` | `medium` | — |
+| Batedor | `claude-sonnet-5-5` | `medium` | — |
+| Alicerce | `claude-sonnet-5-5` | `medium` | `low` para ajuste de uma ou duas linhas |
+| Qualquer agente, tarefa mecânica (1 a 2 linhas, sem lógica nova) | `claude-haiku-5-5` no disparo | `low` | — |
+
+Regras:
+- O Maestro aplica a coluna "Variação por tarefa" passando `model` e `effort` no disparo. Fora desses casos, vale o padrão do cabeçalho.
+- Se um agente em Sonnet tiver bloqueios em duas revisões seguidas, o Maestro passa a dispará-lo com `claude-opus-5-5` e avisa o Carlos.
+- Economias que não dependem do modelo:
+  - **prompts curtos:** o disparo traz a tarefa, as portas, as restrições específicas e o critério de pronto, sem repetir regras que já estão no `CLAUDE.md` ou no `ARCHITECTURE.md`;
+  - **leitura dirigida:** o agente lê só as seções do `ARCHITECTURE.md` indicadas no disparo;
+  - **revisão proporcional:** uma mudança pequena e mecânica é conferida pelo Maestro no diff; a re-revisão de uma correção vai para o mesmo Revisor, que já tem o contexto; o Revisor completo fica para as entregas de tarefa;
+  - **verificação enxuta:** os testes inline cobrem o critério de pronto e os casos de risco apontados, não dezenas de cenários;
+  - **tarefas pequenas juntas:** ajustes pequenos da mesma área vão num único disparo.
+
 ## Hooks (imposição automática das regras)
 
 As regras acima são impostas por hooks. A política está em `.claude/hooks/policy.json`: áreas de cada agente, fase atual, caminhos e tabelas da Fase 2. Só o Maestro altera esse arquivo.
