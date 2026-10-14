@@ -265,7 +265,7 @@ Fonte: a referência oficial em <https://developer.clickup.com/reference>, consu
 - A documentação não lista `last_page` neste endpoint, mas **o spike viu a chave na resposta**. Como não foi possível avaliar se ela é confiável (havia uma página só), o cliente continua parando quando uma página volta com menos de 100 tarefas.
 - Por padrão, subtarefas e tarefas fechadas ficam de fora. Por isso enviamos `subtasks=true&include_closed=true`.
 - Quando `CLICKUP_SPACE_IDS` está definido, enviamos também `space_ids[]` com esses spaces. Um space configurado que o token não enxerga vira erro da estrutura, e a estrutura fica sempre parcial até a variável ser corrigida.
-- A busca padrão não envia `archived`; as arquivadas vêm da busca extra com `archived=true` descrita acima. Fazemos também uma busca extra com `custom_items[]=1` (cerca de uma página a mais por sync), unida à padrão sem duplicar, até ficar confirmado que a busca padrão traz os marcos. Ela é ligada por `FETCH_MILESTONES_SEPARATELY` em `connectors/clickup/connector.py`.
+- A listagem de tarefas faz, nos dois modos e com os mesmos filtros, as buscas abaixo, nesta ordem, unidas sem repetir ids (vale a primeira aparição, então `archived = true` prevalece): `archived` (`archived=true`); `archived_milestones` (`archived=true&custom_items[]=1`); `milestones` (`custom_items[]=1`); e `tasks` (a padrão, sem `archived`). As duas buscas de marcos são ligadas por `FETCH_MILESTONES_SEPARATELY` em `connectors/clickup/connector.py`, até ficar confirmado que as buscas sem `custom_items[]` trazem os marcos. Custo: até 3 requisições a mais por sync, normalmente páginas vazias. `Task.archived` é verdadeiro se a tarefa veio de uma busca com `archived=true` ou se o payload traz `archived: true`; o payload não desmarca. Uma tarefa desarquivada volta a `archived = false` na próxima reconciliação (no incremental, só se desarquivar alterar o `date_updated`, a confirmar). Uma tarefa arquivada entre uma busca e outra pode não vir em nenhuma e ganhar um `deleted_at` falso, corrigido no sync seguinte que a trouxer.
 - Filtros úteis:
   - `date_updated_gt` e `date_updated_lt`, para o sync incremental;
   - `order_by` (`id`, `created`, `updated` ou `due_date`) e `reverse`;
@@ -328,7 +328,7 @@ Fonte: a referência oficial em <https://developer.clickup.com/reference>, consu
 | `Workspace` | team | |
 | `Container` | space / folder / list | Árvore com `kind` (`space`, `folder` ou `list`) e `parent_id`. A UI chama de "projeto". **O `external_id` leva o nível como prefixo** (`space:123`, `folder:456`, `list:789`), porque o ClickUp não garante que ids de níveis diferentes sejam distintos. O mesmo vale para `containers.external_parent_id` e `tasks.external_container_id`. O id original continua no `raw` |
 | `Person` | membro do team (`user.id`, `username`, `email`) | |
-| `Task` | task | `name`, `status.status` e o tipo do status, `priority`, `start_date`, `due_date`, `date_done`, `time_estimate`, assignees, list (container), `parent` (subtarefa), `url`, `is_milestone`, `date_updated`. O id da list e o id do pai ficam também como ids externos, porque o container ou a tarefa-pai podem não estar no banco (ver "Banco de dados"). Um assignee que não está nos members do team vira uma `Person` com os dados que vêm na própria tarefa (`id`, `username`, `email`) |
+| `Task` | task | `name`, `status.status` e o tipo do status, `priority`, `start_date`, `due_date`, `date_done`, `time_estimate`, assignees, list (container), `parent` (subtarefa), `url`, `is_milestone`, `archived` (busca de origem com `archived=true` ou `archived` do payload), `date_updated`. O id da list e o id do pai ficam também como ids externos, porque o container ou a tarefa-pai podem não estar no banco (ver "Banco de dados"). Um assignee que não está nos members do team vira uma `Person` com os dados que vêm na própria tarefa (`id`, `username`, `email`) |
 | `TimeEntry` (Fase 2) | time entry, buscada com o token da pessoa | `user` → person (deve ser sempre o dono do token; se vier outro, a entrada é descartada e o caso vai para o log), `task.id` → task (pode ser nulo), `start`, `end`, `duration`, `billable`, `description`. Uma duração negativa indica timer em andamento: salva com `end=null` e `is_running=true`. Se a tarefa ainda não existir no banco (por exemplo, numa list que o bot não enxerga), `task_id` fica nulo e o id original fica guardado em `external_task_id` |
 
 ## Banco de dados
@@ -387,8 +387,8 @@ Os passos rodam em ordem. Cada um faz commit próprio, então uma falha num pass
 Como o conector informa isso (`connectors/base.py`):
 - `fetch_structure()` devolve um `StructureSnapshot` (workspace, pessoas, containers em ordem de pai para filho, inclusive subfolders, e um `report`). Uma folder cujo pai não veio na resposta sai no fim, e esse pai pode não existir no banco.
 - `iter_tasks(updated_since=...)` devolve lotes de tarefas; o `report` é lido no fim da iteração.
-- Uma listagem é completa quando `report.complete` é verdadeiro: a iteração terminou, não houve erros e todo descartado tem id. Os ids em `report.discarded_ids` (tarefas com dados inválidos) contam como vistos na reconciliação. `report.to_stats()` vai para `stats`.
-- Exceções: `fetch_structure` levanta `ConnectorError` (inclusive `ConnectorAuthError` no 401) quando o workspace não pode ser lido, e o run termina `failed`. Na iteração das tarefas, só 401 e erro de configuração saem como exceção; 403/404 num recurso, 5xx persistente, paginação quebrada ou resposta fora do formato deixam a listagem parcial.
+- Cada `report` traz `mode` (`full` ou `incremental`), `parts` (o estado de cada busca), `complete` (a iteração terminou, não houve erros, todas as buscas terminaram e todo descartado tem id) e `allows_deletions` (= `complete` e `full`). **Só `allows_deletions` autoriza exclusões.** Na estrutura, ele é igual a `complete`. Nas tarefas, a reconciliação exige `allows_deletions` da listagem de tarefas **e** da estrutura do mesmo run. O watermark do incremental só avança se `report.complete`. Os ids dos lotes e os de `report.discarded_ids` (tarefas com dados inválidos) contam como vistos. `report.to_stats()` vai para `stats`.
+- Exceções: `fetch_structure` levanta `ConnectorError` (inclusive `ConnectorAuthError` no 401) quando o workspace não pode ser lido, e o run termina `failed`. Na estrutura, um 403/404 ou uma resposta 200 fora do formato num recurso (a listagem de spaces, um space ou uma folder) vira erro daquele recurso, e a busca segue; um 5xx, 429 ou timeout persistente a interrompe; se a listagem de spaces falhar, há um erro só. Na iteração das tarefas, só 401 e erro de configuração saem como exceção; um erro numa busca (inclusive uma resposta sem a chave `tasks`) encerra só aquela busca e deixa a listagem parcial.
 4. **(Fase 2) Horas, uma vez por conexão `active`:** roda para todas as conexões, até `SYNC_TIME_ENTRIES_CONCURRENCY` pessoas em paralelo. Para cada pessoa:
    - decifra o token e cria um cliente próprio, que tem seu próprio rate limit;
    - busca a janela `[agora − SYNC_TIME_ENTRIES_WINDOW_DAYS, agora]` em `GET /v2/team/{team_id}/time_entries`, **sem `assignee`**. Na primeira vez dessa pessoa, a janela usa `SYNC_BACKFILL_DAYS`;
@@ -420,6 +420,10 @@ Todas as rotas usam o prefixo `/api/v1` e respondem em JSON, com datas em ISO 86
 **Erros:** formato padrão do FastAPI (`{ "detail": ... }`):
 - 404 para id inexistente;
 - 422 para parâmetro inválido;
+- 429 no cooldown do `POST /sync`;
+- 503 em qualquer rota quando o banco está inacessível (falha de conexão). Os outros erros de banco continuam 500, com traceback só no log.
+
+404, 429 e 503 usam o schema `ErrorDetail` (`{ "detail": "..." }`). O 404 vale só para o id no caminho; ids desconhecidos em filtros devolvem lista vazia. No OpenAPI, todos os campos de resposta são obrigatórios, e o `operationId` é o nome da função da rota (`list_tasks`, `request_sync`...), para o cliente TS gerado ter nomes limpos. A documentação interativa fica em `/api/v1/docs`.
 - (Fase 2) 401 sem sessão válida.
 
 **Acesso:**
@@ -441,16 +445,23 @@ Todas as rotas usam o prefixo `/api/v1` e respondem em JSON, com datas em ISO 86
 
 | Método e rota | Filtros (query) | Retorno |
 |---|---|---|
-| `GET /health` | — | Status da API, do banco e do último sync |
+| `GET /health` | — | `{ status, database, latest_sync }`, com `status` e `database` em `ok` ou `error`; 503 com o mesmo corpo quando o banco não responde |
 | `GET /projects` | `kind`, `parent_id` | Árvore space/folder/list, sem paginação |
-| `GET /people` | `q` | Members |
+| `GET /people` | `q` (busca em `username` ou `email`, sem diferenciar maiúsculas; `%` e `_` são literais) | Members, ordenados por `username` |
 | `GET /tasks` | `container_id`, `status`, `assignee_id`, `due_from`, `due_to`, `is_milestone`, `include_closed` (padrão `false`), `archived` (padrão `false`: só as ativas; `true`: só as arquivadas), `q` (busca no nome), `order_by` (`due_date`, `updated_at` ou `name`) | Lista paginada |
 | `GET /tasks/{id}` | — | Detalhe da tarefa, com assignees e subtarefas. (Fase 2) Ganha o total de horas, que soma **só as entradas sincronizadas**, ou seja, as das pessoas conectadas. Por isso vem acompanhado de `time_tracked_coverage`, que diz quantos assignees estão conectados. Enquanto a regra de visibilidade não for definida, mostra só o total, sem detalhar por pessoa |
 | `GET /milestones` | `container_id`, `due_from`, `due_to` (nunca inclui arquivadas) | Atalho para `GET /tasks?is_milestone=true`, ordenado por `due_date` |
 | (Fase 2) `GET /time-entries` | `task_id`, `container_id`, `from`, `to` | Lista paginada **das horas do usuário logado** |
 | (Fase 2) `GET /time-entries/summary` | `from`, `to` (obrigatórios), `group_by` (`container`, `task` ou `day`), filtros iguais aos de `GET /time-entries` | Totais de horas agrupados **do usuário logado** (`[{ key, label, total_ms }]`) |
 
-Registros com `deleted_at` preenchido nunca aparecem nas respostas.
+Registros com `deleted_at` preenchido nunca aparecem nas respostas (uma referência a um registro removido sai como `null`).
+
+Detalhes do contrato de leitura (decididos na F1-08):
+- **`/projects`:** sem filtros, os nós de primeiro nível com `children` aninhados; `parent_id` traz os filhos diretos daquele container, cada um com a sua subárvore; `kind` traz todos os nós daquele nível no escopo, cada um com a sua subárvore. `total` é o número de itens no primeiro nível. Um container cujo pai não está no banco vira raiz.
+- **`/tasks`:** `container_id` inclui as tarefas de toda a subárvore; `status` pode ser repetido, ignora maiúsculas e valores vazios; `due_from` e `due_to` são inclusivos e aceitam instante ISO 8601 ou data pura (`AAAA-MM-DD` vale meia-noite UTC em `due_from` e o fim do dia UTC em `due_to`; instante sem fuso é UTC); `include_closed=false` exclui `status_type` `done` e `closed` (sem `status_type`, a tarefa não conta como encerrada); `archived=false` (padrão) traz só as ativas e `true` só as arquivadas. Ordem padrão `due_date` crescente com nulos no fim; `updated_at` usa `source_updated_at` decrescente; `name` ignora maiúsculas; o `id` desempata.
+- **Formato da tarefa:** `container: { id, kind, name } | null`, `parent_id`, `assignees`, `archived`, `source_updated_at` e os demais campos. O detalhe acrescenta `parent: { id, name, archived } | null` e `subtasks` (filhas diretas, inclusive encerradas e arquivadas).
+- **`/milestones`:** nunca traz arquivadas nem encerradas; para ver os marcos encerrados, use `/tasks?is_milestone=true&include_closed=true`.
+- **`/sync/runs/latest`:** 200 com `null` quando ainda não houve run.
 
 **(Fase 2) Visibilidade das horas:** cada pessoa vê **só as próprias horas**. Ver as horas de outras pessoas, com filtro `person_id` e `group_by=person`, depende de uma regra de permissão que ainda não foi definida, por exemplo um grupo LDAP de gestores. Ver "Riscos". Os parâmetros ficam reservados até essa decisão.
 
@@ -459,7 +470,7 @@ Registros com `deleted_at` preenchido nunca aparecem nas respostas.
 | Método e rota | Comportamento |
 |---|---|
 | `POST /sync` | Pede um sync manual. As verificações seguem esta ordem: (1) se já houver um run `pending` ou `running`, devolve **200** com esse run, e o front só passa a acompanhá-lo; (2) senão, se o `requested_at` do último run manual foi há menos de `SYNC_MANUAL_COOLDOWN_SECONDS`, responde **429** com `Retry-After` igual aos segundos que faltam; (3) senão, cria o run e devolve **202** com ele (`pending`). Se a inserção bater no índice único parcial de `sync_runs` (dois pedidos ao mesmo tempo), devolve **200** com o run que já existe |
-| `GET /sync/runs/latest` | O run mais recente, que o front consulta a cada ~2 s enquanto ele estiver `pending` ou `running` |
+| `GET /sync/runs/latest` | O run mais recente (ou `null`), que o front consulta a cada ~2 s enquanto ele estiver `pending` ou `running` |
 | `GET /sync/runs` | Histórico paginado dos runs |
 
 O sync manual sincroniza tudo: estrutura e tarefas e, na Fase 2, as horas de todas as pessoas conectadas. Não existe sync "só das minhas horas".
@@ -494,7 +505,7 @@ docker-compose.yml  # postgres, api, worker, frontend
    - os tokens OAuth dão acesso de escrita, porque o ClickUp não tem escopos. Por isso ficam criptografados em repouso, fora dos logs, e o código só usa GET.
 2. **Spike (F1-04), feito em 2026-10-14 com o token do `.env`:**
    - **Resolvido:** os headers `X-RateLimit-*` vêm nas respostas 200 e o `Reset` é em segundos; o plano sai de `GET /v2/team/{team_id}/plan`; `archived=true` traz só as arquivadas; nenhuma colisão de ids entre níveis na amostra (o prefixo de nível continua); `members[].user.role` existe.
-   - **Pendente:** se tarefas arquivadas aparecem na busca padrão e se os marcos vêm sem `custom_items[]`. O workspace testado não tem tarefa arquivada nem marco.
+   - **Pendente:** se a busca padrão traz os marcos e se a busca `archived=true` sem `custom_items[]` traz marcos arquivados; se arquivar ou desarquivar altera o `date_updated`. O workspace testado não tem tarefa arquivada nem marco.
    - **Ambiente de teste (decisão do Carlos, 2026-10-14):** o workspace usado no desenvolvimento é só de teste (Free Forever, um único membro, token de um usuário **Owner**). Isso é aceito durante o desenvolvimento. **Pré-requisito antes de qualquer uso real:** um usuário bot com papel Member ou Guest no workspace da empresa, sem acesso a horas de outras pessoas, e a confirmação do plano (rate limit) desse workspace.
 3. **Webhooks:** fora do MVP. A documentação diz que webhooks pertencem ao usuário que os cria, mas não diz qual papel é necessário para criá-los. Criar um webhook também é uma escrita.
 4. **Rate limit:** 100 req/min nos planos até Business, contados **por token**.
