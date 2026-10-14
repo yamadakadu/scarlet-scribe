@@ -4,6 +4,8 @@ FROM python:3.12-slim
 
 COPY --from=ghcr.io/astral-sh/uv:0.12.10 /uv /uvx /bin/
 
+# UV_LINK_MODE=copy: o cache do uv é montado (--mount=type=cache) em outro
+# sistema de arquivos, então o uv copia em vez de criar hardlinks.
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     UV_PYTHON_DOWNLOADS=never \
@@ -15,11 +17,13 @@ WORKDIR /app
 
 # Dependências primeiro, para aproveitar o cache das camadas.
 COPY backend/pyproject.toml backend/uv.lock backend/.python-version ./
-RUN uv sync --locked --no-dev --no-install-project
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-dev --no-install-project
 
 # Código do pacote, Alembic e o próprio projeto (instalado em modo editável).
 COPY backend/ ./
-RUN uv sync --locked --no-dev
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-dev
 
 EXPOSE 8000
 

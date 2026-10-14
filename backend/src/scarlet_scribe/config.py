@@ -22,6 +22,8 @@ class Settings(BaseSettings):
         env_file=REPO_ROOT_ENV_FILE,
         env_file_encoding="utf-8",
         extra="ignore",
+        # Variável vazia (ex.: CLICKUP_API_TOKEN= copiado do exemplo) conta como ausente.
+        env_ignore_empty=True,
     )
 
     # Banco
