@@ -12,7 +12,7 @@ Este plano diz o que será executado, por quem e em que ordem, para que o orques
 | **Alicerce** | Infraestrutura e estrutura do repositório | `backend/pyproject.toml`, `backend/alembic.ini`, `backend/alembic/env.py`, `backend/alembic/README`, `backend/alembic/versions/.gitkeep` (a pasta e as migrations são do Arquivista), `docker-compose.yml`, `.env.example`, Dockerfiles, `backend/src/scarlet_scribe/config.py`. O `.gitignore` é do Maestro: mudanças nele são pedidas ao Maestro |
 | **Batedor** | Spike: valida o comportamento real da API do ClickUp com o token do bot. Não escreve código de produção | Só `backend/scripts/clickup_spike.py` (os demais scripts de `backend/scripts/` são do Conector) e o relatório que entrega ao Maestro |
 | **Conector** | Integração com o ClickUp: cliente HTTP, schemas, mapper e conector | `backend/src/scarlet_scribe/connectors/` |
-| **Arquivista** | Modelo canônico, tabelas e migrations | `backend/src/scarlet_scribe/domain/`, `backend/src/scarlet_scribe/db/`, `backend/alembic/versions/` |
+| **Arquivista** | Modelo canônico, tabelas e migrations | `backend/src/scarlet_scribe/domain/`, `backend/src/scarlet_scribe/db/`, `backend/alembic/versions/` e `backend/alembic/env.py` (compartilhado com o Alicerce, para ligar o `Base.metadata` às migrations) |
 | **Sincronista** | Serviço de sincronização e worker | `backend/src/scarlet_scribe/sync/` |
 | **Portal** | API HTTP (FastAPI) | `backend/src/scarlet_scribe/api/` |
 | **Vitrine** | Frontend (Vite + React + TS) | `frontend/` |
@@ -53,7 +53,7 @@ As regras acima são impostas por hooks. A política está em `.claude/hooks/pol
 |---|---|---|
 | Claude Code (`PreToolUse`) | `.claude/hooks/guard_edits.py` | Edição fora da área do agente (identificado pela branch), peças da Fase 2 durante a Fase 1, arquivos de teste, chamadas de escrita no conector do ClickUp, segredos no conteúdo e arquivos internos do `.git` |
 | Claude Code (`PreToolUse`) | `.claude/hooks/guard_reads.py` | Leitura de `.env` e de chaves |
-| Claude Code (`PreToolUse`) | `.claude/hooks/guard_bash.py` | **Bloqueia:** ler `.env` ou exibir variáveis de ambiente; `--no-verify` e mudanças em `core.hooksPath`; comandos git destrutivos; commit em branch fora do padrão; dependências de teste; escrita na API do ClickUp. **Pede confirmação:** push, commit ou merge na `main` e remoções recursivas |
+| Claude Code (`PreToolUse`) | `.claude/hooks/guard_bash.py` | **Bloqueia:** ler `.env` ou exibir variáveis de ambiente; `--no-verify` e mudanças em `core.hooksPath`; comandos git destrutivos; commit em branch fora do padrão; dependências de teste; escrita na API do ClickUp. **Pede confirmação:** push, commit ou merge na `main` e remoções recursivas. O texto literal das mensagens de commit (`-m` ou heredoc com `-F -`) não é verificado; mensagens com `$(...)`, crase ou `$VAR` continuam sendo |
 | Claude Code (`SubagentStop`) | `.claude/hooks/log_subagent.py` | Registra o fim de cada subagente em `.claude/logs/agents.log` (fora do git) |
 | git (`pre-commit`) | `.githooks/pre-commit` | Branch `<agente>/<feature>`, arquivos só da área do agente, arquivos proibidos (segredos, artefatos, arquivos locais, acima de 1 MB), segredos nas linhas adicionadas e as regras de fase, testes e ClickUp |
 | git (`commit-msg`) | `.githooks/commit-msg` | Assunto começando com `<agente>/<feature>: ` |
@@ -122,7 +122,7 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 
 | ID | Status | Observação |
 |---|---|---|
-| F1-01 | pendente | |
+| F1-01 | em revisão | Aprovada pelo Revisor (branch `alicerce/monorepo`, commits 3941f53 e 1fd9d44); aguardando a integração na `main` |
 | F1-02 | pendente | Aguardando o token do bot |
 | F1-03 | pendente | |
 | F1-04 | pendente | |

@@ -3,7 +3,8 @@
 
 Blocks (exit 2): reading secret files or the environment, bypassing git hooks,
 destructive git commands, commits on branches outside <agente>/<feature>, test
-dependencies, and write requests to the ClickUp API.
+dependencies, and write requests to the ClickUp API. The literal text of commit
+messages is not checked (see without_commit_messages).
 Asks the user (permissionDecision "ask"): push, commit/merge on the main branch,
 and recursive deletions. (`rm -rf` itself is already blocked by the user's global hook.)
 """
@@ -26,6 +27,47 @@ CLICKUP_WRITE_RE = re.compile(
     r"|\bhttps?\s+(POST|PUT|PATCH|DELETE)\b",
     re.IGNORECASE,
 )
+
+# Commit messages are free text: mentioning ".env" or "pytest" there reads nothing.
+# Messages that the shell would expand ($(...), `...`, $VAR) are kept, so
+# `git commit -m "$(cat .env)"` is still caught.
+GIT_COMMIT_RE = re.compile(r"\bgit\b[^\n;&|]*?\bcommit\b")
+MESSAGE_ARG_RE = re.compile(r"""(\s(?:-m|--message)(?:=|\s+))("(?:[^"\\]|\\.)*"|'[^']*')""")
+HEREDOC_RE = re.compile(r"""<<-?\s*(['"]?)(\w+)\1""")
+STDIN_FILE_RE = re.compile(r"\s(-F|--file)(=|\s*)-(\s|$)")
+EXPANSION_RE = re.compile(r"\$|`")
+
+
+def without_commit_messages(command: str) -> str:
+    """The command with the literal text of `git commit` messages (-m/--message, or a
+    heredoc read with -F -) replaced by an empty message; everything else is kept."""
+    start = GIT_COMMIT_RE.search(command)
+    if start is None:
+        return command
+    head, tail = command[: start.start()], command[start.start() :]
+
+    def blank(m: re.Match) -> str:
+        value = m.group(2)
+        if value.startswith('"') and EXPANSION_RE.search(value):
+            return m.group(0)
+        return m.group(1) + "''"
+
+    tail = MESSAGE_ARG_RE.sub(blank, tail)
+    lines, out, i = tail.split("\n"), [], 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        i += 1
+        doc = HEREDOC_RE.search(line)
+        if not (doc and GIT_COMMIT_RE.search(line) and STDIN_FILE_RE.search(line)):
+            continue
+        end = next((j for j in range(i, len(lines)) if lines[j].strip() == doc.group(2)), None)
+        if end is None:
+            continue
+        body = "\n".join(lines[i:end])
+        if doc.group(1) or not EXPANSION_RE.search(body):  # quoted delimiter: no expansion
+            i = end
+    return head + "\n".join(out)
 
 
 def split_commands(command: str) -> list[list[str]]:
@@ -124,6 +166,7 @@ def main() -> int:
     command = payload.get("tool_input", {}).get("command", "")
     if not command:
         return 0
+    command = without_commit_messages(command)
     cwd = Path(payload.get("cwd") or ".").resolve()
     blocks: list[str] = []
     asks: list[str] = []

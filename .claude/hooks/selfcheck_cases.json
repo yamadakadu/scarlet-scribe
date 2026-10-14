@@ -29,7 +29,17 @@
     ["uv add --dev pytest", "block"],
     ["npm install -D vitest", "block"],
     ["curl -X POST https://api.clickup.com/api/v2/list/1/task", "block"],
-    ["curl -H 'Authorization: x' https://api.clickup.com/api/v2/team", "allow"]
+    ["curl -H 'Authorization: x' https://api.clickup.com/api/v2/team", "allow"],
+    ["git commit -m 'liga o .env da raiz'", "ask"],
+    ["git commit -m \"documenta o .env e o pytest\"", "ask"],
+    ["git commit -q -F - <<'EOF'\nliga o .env da raiz\nEOF", "ask"],
+    ["git commit -F - <<EOF\nliga o .env da raiz\nEOF", "ask"],
+    ["git commit -m \"$(cat .env)\"", "block"],
+    ["git commit -F - <<EOF\n$(cat .env)\nEOF", "block"],
+    ["git commit -F .env", "block"],
+    ["git commit -m 'x' && cat .env", "block"],
+    ["cat .env && git commit -m 'x'", "block"],
+    ["git commit -m 'menciona --no-verify' --no-verify", "block"]
   ],
   "read": [
     [{"file_path": "REPO/.env"}, "block"],

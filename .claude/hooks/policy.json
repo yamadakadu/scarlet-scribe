@@ -39,6 +39,7 @@
     "arquivista": [
       "backend/src/scarlet_scribe/domain/",
       "backend/src/scarlet_scribe/db/",
+      "backend/alembic/env.py",
       "backend/alembic/versions/"
     ],
     "sincronista": ["backend/src/scarlet_scribe/sync/"],
