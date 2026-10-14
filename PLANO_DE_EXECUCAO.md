@@ -142,14 +142,14 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 | ID | Status | Observação |
 |---|---|---|
 | F1-01 | integrado | Branch `alicerce/monorepo` (3941f53, 1fd9d44, 54e5ee1), integrada na `main` em 525c114 |
-| F1-02 | pendente | Aguardando o token do bot |
+| F1-02 | integrado | `.env` preenchido pelo Carlos; o Maestro conferiu as variáveis sem ler os valores |
 | F1-03 | integrado | Branch `conector/cliente-http` (8e4ca77, 1d807ac), integrada em d0dd46a |
-| F1-04 | pendente | |
+| F1-04 | integrado | Script integrado (6c0fe59). Pendentes: tarefas arquivadas e marcos, porque o workspace testado não tem nenhum dos dois |
 | F1-05 | integrado | Branch `arquivista/modelos-fase1` (d07ffd7, aa47dfd), integrada em 3823108 |
-| F1-06 | pendente | |
+| F1-06 | em andamento | |
 | F1-07 | pendente | |
-| F1-08 | pendente | |
+| F1-08 | em andamento | |
 | F1-09a | integrado | Branch `vitrine/scaffold` (f90301a, 1282231), integrada em 358dda4 |
 | F1-09b | pendente | |
-| F1-12 | pendente | |
+| F1-12 | em andamento | |
 | F1-11 | pendente | |
