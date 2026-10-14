@@ -10,7 +10,7 @@ The user writes in Portuguese. Reply in Portuguese.
 
 ## Current state and phases
 
-The architecture is under review with the user. No application code exists yet; the repo is still the `uv init --package` scaffold at the root (`src/scarlet_scribe/__init__.py`).
+Phase 1 is under way; `PLANO_DE_EXECUCAO.md` › "Acompanhamento" has the status of each task. The repo is a monorepo: the Python package lives in `backend/` (uv project, `src/` layout) and `frontend/` will hold the Vite app. The infrastructure is in place: `config.py`, `docker-compose.yml` and Alembic, but no migrations yet. There is no application code yet.
 
 Work happens in two phases:
 - **Phase 1 (initial structure):** the bot token, structure, tasks, milestones, sync, read API and frontend. It has **no login and no time entries**, and all routes are open.
@@ -59,12 +59,15 @@ By the user's request, no test suite until an MVP exists. Don't add tests or tes
 
 ## Commands
 
-Available now (repo root):
+Available now (from the repo root; requires Docker Compose 2.24+):
 
 ```bash
-uv sync                      # create/update .venv from uv.lock
-uv run scarlet-scribe        # run the placeholder entry point
-uv add <pkg>                 # add a dependency
+uv sync --directory backend                        # create/update backend/.venv from uv.lock
+uv add --directory backend <pkg>                   # add a dependency
+docker compose up -d postgres                      # start Postgres (dev defaults work without .env)
+docker compose run --rm migrate                    # apply migrations inside Docker
+uv run --directory backend alembic upgrade head    # apply migrations from the host (needs DATABASE_URL)
+docker compose down                                # stop everything (add -v to drop the database volume)
 ```
 
-To be created in the first MVP step (update this section once they exist): `backend/` uv commands, `frontend/` npm scripts and `docker compose up`.
+`config.py` reads the `.env` at the repo root wherever the command runs; `.env.example` documents every variable. The `api` and `worker` services start once F1-08 and F1-07 create their modules. To be added later: `frontend/` npm scripts (F1-09a) and the full `docker compose up` (F1-12).

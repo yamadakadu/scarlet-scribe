@@ -103,6 +103,19 @@ Entry points no `pyproject.toml`: a API roda com `uvicorn scarlet_scribe.api.app
 | `SYNC_FULL_RECONCILE_HOURS` | `24` | Frequência da reconciliação completa de tarefas (detecta exclusões) |
 | `CLICKUP_RATE_LIMIT_PER_MINUTE` | `100` | Limite preventivo do cliente, por token |
 
+`CLICKUP_API_TOKEN` e `CLICKUP_TEAM_ID` são opcionais no `Settings`, para que a API e as migrations funcionem antes de o token existir; quem usa o ClickUp (conector e sync) exige que estejam preenchidos. Uma variável vazia conta como ausente.
+
+**Só do Docker Compose** (não são lidas pelo `config.py`; o compose monta o `DATABASE_URL` dos containers a partir delas):
+
+| Variável | Padrão | Uso |
+|---|---|---|
+| `POSTGRES_PASSWORD` | `postgres` | Senha do Postgres de desenvolvimento (o usuário é fixo: `postgres`) |
+| `POSTGRES_DB` | `scarlet_scribe` | Nome do banco |
+| `POSTGRES_PORT` | `5432` | Porta do Postgres exposta no host |
+| `API_PORT` | `8000` | Porta da API exposta no host |
+
+Mudar `POSTGRES_PASSWORD`, `POSTGRES_DB` ou `POSTGRES_PORT` exige ajustar também o `DATABASE_URL`, que é o usado fora do Docker.
+
 **Fase 2:**
 
 | Variável | Padrão | Uso |
@@ -124,7 +137,7 @@ Entry points no `pyproject.toml`: a API roda com `uvicorn scarlet_scribe.api.app
 | `SESSION_COOKIE_SECURE` | `false` em dev | `true` em produção (HTTPS) |
 | `SYNC_TIME_ENTRIES_CONCURRENCY` | `4` | Quantas pessoas têm as horas buscadas em paralelo |
 
-Um arquivo `.env.example` vai documentar essas variáveis. O `.env` real fica no `.gitignore`.
+O arquivo `.env.example`, na raiz, documenta essas variáveis. O `.env` real fica na raiz do repositório e no `.gitignore`; o `config.py` o encontra pela própria posição, de qualquer diretório.
 
 Em desenvolvimento, o **Vite faz proxy de `/api` para o backend**, desde a Fase 1. Assim o front e a API ficam na mesma origem, e não há configuração de CORS. Na Fase 2, isso também faz o cookie de sessão e o callback do OAuth funcionarem sem ajustes.
 

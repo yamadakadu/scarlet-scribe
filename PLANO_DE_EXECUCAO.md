@@ -2,7 +2,7 @@
 
 Este plano diz o que será executado, por quem e em que ordem, para que o orquestrador acompanhe o andamento. O desenho técnico de cada item está em `ARCHITECTURE.md`; este documento não o repete.
 
-**Status:** aguardando a revisão da arquitetura com o Carlos. Nenhuma tarefa começa antes disso.
+**Status:** Fase 1 em andamento. A arquitetura foi revisada com o Carlos; o andamento de cada tarefa está em "Acompanhamento".
 
 ## Agentes
 
@@ -74,7 +74,7 @@ As regras acima são impostas por hooks. A política está em `.claude/hooks/pol
 
 | ID | Tarefa | Agente | Depende de | Onda | Entregável e critério de pronto |
 |---|---|---|---|---|---|
-| F1-01 | Reorganizar em monorepo: mover o pacote uv para `backend/`; adicionar as dependências da Fase 1 (fastapi, uvicorn, httpx, pydantic-settings, sqlalchemy[asyncio], asyncpg, alembic, apscheduler); criar `config.py` com as variáveis da Fase 1 (o `.env` fica na raiz do repositório, então o `config.py` precisa achá-lo também quando o comando roda em `backend/`, por exemplo com `env_file=(".env", "../.env")`), `.env.example`, `docker-compose.yml` (postgres, api, worker) e a inicialização do Alembic (com `backend/alembic/versions/.gitkeep`); registrar os entry points; trocar a `description` padrão do `pyproject.toml` | Alicerce | — | 0 | `docker compose up -d postgres` sobe saudável; `uv run --directory backend python -c "import scarlet_scribe"` funciona; `uv run --directory backend alembic upgrade head` roda sem erro |
+| F1-01 | Reorganizar em monorepo: mover o pacote uv para `backend/`; adicionar as dependências da Fase 1 (fastapi, uvicorn, httpx, pydantic-settings, sqlalchemy[asyncio], asyncpg, alembic, apscheduler); criar `config.py` com as variáveis da Fase 1 (o `.env` fica na raiz do repositório, então o `config.py` precisa achá-lo também quando o comando roda em `backend/`, o que foi resolvido com um caminho calculado a partir do próprio `config.py`), `.env.example`, `docker-compose.yml` (postgres, api, worker) e a inicialização do Alembic (com `backend/alembic/versions/.gitkeep`); registrar os entry points; trocar a `description` padrão do `pyproject.toml` | Alicerce | — | 0 | `docker compose up -d postgres` sobe saudável; `uv run --directory backend python -c "import scarlet_scribe"` funciona; `uv run --directory backend alembic upgrade head` roda sem erro |
 | F1-02 | Fornecer no `.env` local o token do bot (`CLICKUP_API_TOKEN`) e o `CLICKUP_TEAM_ID`. Confirmar o papel do bot no workspace e, se possível, o plano do ClickUp | Carlos | — | 0 | `.env` preenchido (fora do git). O Maestro confirma que as variáveis existem, sem ler os valores |
 | F1-03 | Cliente HTTP do ClickUp (`client.py`): só GET; o esquema de auth como parâmetro; limite preventivo de requisições; retries e backoff (429, 5xx, timeout); paginação de tarefas parando na página com menos de 100 itens. Schemas Pydantic para user, team, space, folder, list e task | Conector | F1-01 | 1 | O módulo importa sem erro. O cliente não tem nenhum método de escrita. Um script de exemplo lista os workspaces com o token do `.env` (roda depois de F1-02) |
 | F1-04 | Spike: com o cliente de F1-03, responder aos itens "a confirmar": se tarefas arquivadas aparecem no endpoint de tarefas; se marcos vêm sem `custom_items[]`; se os headers `X-RateLimit-*` vêm em respostas 200 e a unidade do `Reset`; qual é o plano do workspace; se o bot enxerga todos os spaces esperados | Batedor | F1-02, F1-03 | 2 | Relatório entregue ao Maestro com uma resposta por item, mostrando a evidência (status HTTP, campos observados), sem dados sensíveis. O Maestro atualiza o `ARCHITECTURE.md` |
@@ -84,7 +84,7 @@ As regras acima são impostas por hooks. A política está em `.claude/hooks/pol
 | F1-08 | API FastAPI da Fase 1: `/health`, `/projects`, `/people`, `/tasks`, `/tasks/{id}`, `/milestones`, `POST /sync` (202, 200 ou 429 com cooldown), `/sync/runs` e `/sync/runs/latest`. Paginação `limit`/`offset` e OpenAPI em `/api/v1/openapi.json` | Portal | F1-05 | 4 | `curl` em cada rota retorna o formato documentado; `POST /sync` duas vezes seguidas devolve 202 e depois 200; dentro do cooldown, 429 com `Retry-After`; o OpenAPI é gerado |
 | F1-09a | Scaffold do front: Vite + React + TS, TanStack Query, proxy de `/api` para o backend, layout base e rotas. O destino do proxy vem de `VITE_API_PROXY_TARGET` (padrão `http://localhost:8000`), para funcionar fora e dentro do Docker | Vitrine | F1-01 | 1 | `npm run dev` sobe e a página inicial abre; o proxy responde `/api/v1/health` depois de F1-08; trocar `VITE_API_PROXY_TARGET` muda o destino do proxy |
 | F1-09b | Telas da Fase 1: lista de tarefas com filtros, lista de marcos por data, árvore de projetos e botão "Sincronizar agora", que acompanha o status do run. Cliente TS gerado do OpenAPI | Vitrine | F1-08, F1-09a | 5 | Com o backend rodando, as telas mostram os dados sincronizados; o botão dispara o sync, mostra o progresso e trata o 429 do cooldown |
-| F1-12 | Serviço `frontend` no `docker-compose.yml` e `frontend/Dockerfile` (dev server do Vite com `VITE_API_PROXY_TARGET=http://api:8000`) | Alicerce | F1-01, F1-09a | 2 | `docker compose up` sobe postgres, api, worker e frontend; a página do front abre pelo container |
+| F1-12 | Serviço `frontend` no `docker-compose.yml` e `frontend/Dockerfile` (dev server do Vite com `VITE_API_PROXY_TARGET=http://api:8000`). Também uma imagem única para `migrate`, `api` e `worker` (um `image:` comum na âncora `x-backend`), para que um rebuild não deixe serviços com dependências diferentes (sugestão do Revisor na F1-01) | Alicerce | F1-01, F1-09a | 2 | `docker compose up` sobe postgres, api, worker e frontend; a página do front abre pelo container |
 | F1-10 | Revisão de cada entrega: F1-01, F1-03, F1-05, F1-06, F1-07, F1-08, F1-09a, F1-09b e F1-12 | Revisor | cada entrega | contínua | Parecer "aprovado" ou uma lista de bloqueios. Só o aprovado é integrado |
 | F1-11 | Verificação ponta a ponta: `docker compose up`, sync agendado e manual, dados visíveis no front. Atualizar a seção "Commands" do `CLAUDE.md` e o status deste plano | Maestro + Carlos | todas, incluindo F1-12 | 6 | O Carlos valida a Fase 1 no navegador e libera o início da Fase 2 |
 
@@ -122,7 +122,7 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 
 | ID | Status | Observação |
 |---|---|---|
-| F1-01 | em revisão | Aprovada pelo Revisor (branch `alicerce/monorepo`, commits 3941f53 e 1fd9d44); aguardando a integração na `main` |
+| F1-01 | integrado | Branch `alicerce/monorepo` (3941f53, 1fd9d44, 54e5ee1), integrada na `main` em 525c114 |
 | F1-02 | pendente | Aguardando o token do bot |
 | F1-03 | pendente | |
 | F1-04 | pendente | |
