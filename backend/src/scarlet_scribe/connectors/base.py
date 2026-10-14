@@ -6,14 +6,17 @@ os próprios tipos dentro do seu subpacote.
 
 Listagem completa ou parcial (ver `ARCHITECTURE.md` › "Sincronização"):
 um registro só pode ganhar `deleted_at` se a listagem daquele passo terminou sem
-nenhum erro. Por isso a estrutura e as tarefas vêm acompanhadas de um
-`ListingReport`, que diz se a listagem foi completa (`report.complete`) e traz
-os erros por recurso e os registros descartados, prontos para `stats`.
+nenhum erro **e** buscou tudo (modo `full`). Por isso a estrutura e as tarefas
+vêm acompanhadas de um `ListingReport`, que diz o modo (`report.mode`), se a
+listagem foi completa (`report.complete`) e se ela autoriza exclusões
+(`report.allows_deletions`), e traz os erros por recurso, os registros
+descartados e as buscas que compõem a listagem, prontos para `stats`.
 """
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable
+import enum
 from dataclasses import dataclass, field
 from datetime import datetime
 from types import TracebackType
@@ -66,34 +69,86 @@ class FetchIssue:
         }
 
 
+class ListingMode(enum.StrEnum):
+    """O que a listagem se propôs a buscar."""
+
+    # Tudo o que existe na origem (estrutura; tarefas na reconciliação).
+    FULL = "full"
+    # Só o que mudou desde um instante (tarefas com `updated_since`). Mesmo
+    # completa, uma listagem incremental **nunca** autoriza exclusões: o que não
+    # veio pode simplesmente não ter mudado.
+    INCREMENTAL = "incremental"
+
+
+@dataclass
+class ListingPart:
+    """Uma das buscas que compõem a listagem (por exemplo, tarefas ativas,
+    arquivadas e marcos).
+
+    - `finished`: a busca foi até o fim, sem erro;
+    - `received`: registros recebidos nela, contando repetidos e descartados.
+    """
+
+    finished: bool = False
+    received: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"finished": self.finished, "received": self.received}
+
+
 @dataclass
 class ListingReport:
     """Como terminou uma listagem (estrutura ou tarefas).
 
-    - `errors`: falhas que deixaram a listagem **parcial** (403/404 num space,
-      folder ou list; página de tarefas que falhou; timeout persistente).
-      Qualquer erro aqui proíbe marcar exclusões.
+    - `mode`: `full` (buscou tudo) ou `incremental` (só o que mudou). Só uma
+      listagem `full` e completa pode marcar exclusões; `complete=True` no modo
+      incremental quer dizer apenas "nada falhou", e **não** autoriza
+      exclusões. Use `allows_deletions`, que já combina os dois.
+    - `errors`: falhas que deixaram a listagem **parcial** (403/404 ou resposta
+      fora do formato num space, folder ou list; página de tarefas que falhou;
+      timeout persistente). Qualquer erro aqui proíbe marcar exclusões.
     - `discarded`: registros que vieram da origem mas foram descartados por dados
       inválidos (por exemplo, uma data que não converte). O registro existe na
       origem: na reconciliação, trate os ids de `discarded_ids` como "vistos",
       para não marcá-los como excluídos. Um descartado **sem id** torna a
       listagem parcial.
+    - `parts`: as buscas que compõem a listagem, por nome (nas tarefas do
+      ClickUp: `archived`, `milestones` e `tasks`). A listagem só é completa se
+      todas terminaram sem erro. Vazio quando a listagem é uma busca só.
     - `finished`: a iteração foi até o fim. Uma iteração interrompida pelo
       consumidor (ou por exceção) não conta como completa.
     """
 
+    mode: ListingMode = ListingMode.FULL
     errors: list[FetchIssue] = field(default_factory=list)
     discarded: list[FetchIssue] = field(default_factory=list)
+    parts: dict[str, ListingPart] = field(default_factory=dict)
     finished: bool = False
 
     @property
     def complete(self) -> bool:
-        """True só se a listagem terminou, sem erros e sem descartados sem id."""
+        """True só se a listagem terminou, sem erros, com todas as buscas
+        terminadas e sem descartados sem id. Não diz nada sobre o modo: ver
+        `allows_deletions`."""
         return (
             self.finished
             and not self.errors
+            and all(part.finished for part in self.parts.values())
             and all(issue.external_id is not None for issue in self.discarded)
         )
+
+    @property
+    def is_full(self) -> bool:
+        return self.mode is ListingMode.FULL
+
+    @property
+    def allows_deletions(self) -> bool:
+        """`complete` e `full`: a única combinação que autoriza `deleted_at`.
+
+        É condição necessária, não suficiente: a reconciliação de tarefas exige
+        também a estrutura completa no mesmo run (regra do sync).
+        """
+        return self.complete and self.is_full
 
     @property
     def discarded_ids(self) -> set[str]:
@@ -102,9 +157,12 @@ class ListingReport:
     def to_stats(self) -> dict[str, Any]:
         """Resumo serializável para `sync_runs.stats` (contadores e ids, sem conteúdo)."""
         return {
+            "mode": self.mode.value,
             "complete": self.complete,
+            "allows_deletions": self.allows_deletions,
             "errors": len(self.errors),
             "discarded": len(self.discarded),
+            "parts": {name: part.to_dict() for name, part in self.parts.items()},
             "error_details": [issue.to_dict() for issue in self.errors],
             "discarded_details": [issue.to_dict() for issue in self.discarded],
         }
@@ -121,8 +179,9 @@ class StructureSnapshot:
     as folders em ordem topológica (a pai sempre antes da filha, inclusive em
     subfolders), depois as lists. Uma folder cujo pai não veio na listagem sai
     depois das demais folders do space, com o `external_parent_id` preservado;
-    quem grava não deve supor que esse pai existe. `report.complete` diz se dá
-    para marcar exclusões.
+    quem grava não deve supor que esse pai existe. A estrutura é sempre `full`:
+    `report.allows_deletions` (igual a `report.complete` aqui) diz se dá para
+    marcar exclusões.
     """
 
     workspace: Workspace
@@ -140,10 +199,11 @@ class TaskListing:
         listing = connector.iter_tasks(updated_since=...)
         async for batch in listing:
             ...  # upsert do lote
-        if listing.report.complete:
+        if listing.report.allows_deletions:  # completa e `full`
             ...  # só aqui pode marcar exclusões
 
     O `report` é preenchido durante a iteração; leia-o depois do `async for`.
+    Cada id de tarefa sai no máximo uma vez na listagem inteira.
     Erros que deixam a listagem parcial **não** interrompem com exceção: a
     iteração termina, e o erro fica em `report.errors` (inclusive 5xx ou 429
     persistentes e resposta fora do formato numa página). Na iteração das
@@ -151,8 +211,8 @@ class TaskListing:
     exceção. Para `fetch_structure`, que tem outro contrato, ver o protocolo.
     """
 
-    def __init__(self, source: TaskBatchSource) -> None:
-        self.report = ListingReport()
+    def __init__(self, source: TaskBatchSource, *, mode: ListingMode = ListingMode.FULL) -> None:
+        self.report = ListingReport(mode=mode)
         self._source = source
         self._started = False
 
@@ -223,9 +283,12 @@ class Connector(Protocol):
     def iter_tasks(self, *, updated_since: datetime | None = None) -> TaskListing:
         """Tarefas (com subtarefas, fechadas e marcos), em lotes.
 
-        - `updated_since=None`: modo completo (reconciliação).
-        - `updated_since=<datetime com fuso>`: modo incremental, só as tarefas
+        - `updated_since=None`: modo `full` (reconciliação).
+        - `updated_since=<datetime com fuso>`: modo `incremental`, só as tarefas
           alteradas depois desse instante. A margem de segurança é do chamador.
+          Uma listagem incremental nunca autoriza exclusões.
+
+        Inclui as tarefas arquivadas (com `Task.archived = True`).
         """
         ...
 
@@ -236,6 +299,8 @@ __all__ = [
     "ConnectorConfigError",
     "ConnectorError",
     "FetchIssue",
+    "ListingMode",
+    "ListingPart",
     "ListingReport",
     "StructureSnapshot",
     "TaskListing",

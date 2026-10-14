@@ -403,16 +403,19 @@ class ClickUpClient:
         date_updated_gt: int | None = None,
         space_ids: Sequence[str] | None = None,
         custom_items: Sequence[int] | None = None,
+        archived: bool = False,
     ) -> AsyncIterator[ClickUpTaskPage]:
         """`GET /v2/team/{team_id}/task`, página a página (100 tarefas, `page` a partir de 0).
 
         Envia `subtasks=true&include_closed=true`. A resposta não tem `last_page`
         documentado: a paginação para na primeira página com menos de 100 itens.
-        Não envia `archived` (com `archived=true` a API traz **só** as arquivadas).
 
         - `date_updated_gt`: Unix em ms (sync incremental).
         - `space_ids`: vira `space_ids[]` repetido.
         - `custom_items`: vira `custom_items[]` repetido (`0` = tarefa, `1` = marco).
+        - `archived`: `True` envia `archived=true`, que é um filtro de **só
+          arquivadas** (confirmado no spike). `False` (padrão) não envia o
+          parâmetro, e a API traz só as não arquivadas.
 
         Cada tarefa é validada isoladamente: as inválidas vão para
         `ClickUpTaskPage.invalid` e não derrubam a página.
@@ -429,6 +432,8 @@ class ClickUpClient:
             base.append(("space_ids[]", str(space_id)))
         for item in custom_items or ():
             base.append(("custom_items[]", str(int(item))))
+        if archived:
+            base.append(("archived", "true"))
 
         previous_first_id: str | None = None
         for page in range(MAX_TASK_PAGES):
