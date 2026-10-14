@@ -12,6 +12,10 @@ Regras (ver `ARCHITECTURE.md` › "Integração com o ClickUp"):
   `X-RateLimit-Reset`; 5xx, timeout e erro de rede usam backoff; 401, 403 e 404
   não têm retry.
 - O token nunca aparece em logs, `repr` ou mensagens de erro.
+- Respostas fora do formato esperado viram `ClickUpResponseError`; nenhuma
+  `pydantic.ValidationError` sai do cliente. Nas tarefas, a validação é feita
+  tarefa a tarefa: uma tarefa inválida é separada em `ClickUpTaskPage.invalid`
+  (id e motivo, sem conteúdo) e não derruba a página.
 """
 
 from __future__ import annotations
@@ -23,11 +27,17 @@ import random
 import time
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Self
 
 import httpx
-from pydantic import SecretStr
+from pydantic import BaseModel, SecretStr, ValidationError
 
+from scarlet_scribe.connectors.base import (
+    ConnectorAuthError,
+    ConnectorConfigError,
+    ConnectorError,
+)
 from scarlet_scribe.connectors.clickup.schemas import (
     ClickUpFolder,
     ClickUpFoldersResponse,
@@ -36,7 +46,6 @@ from scarlet_scribe.connectors.clickup.schemas import (
     ClickUpSpace,
     ClickUpSpacesResponse,
     ClickUpTask,
-    ClickUpTasksPage,
     ClickUpTeam,
     ClickUpTeamsResponse,
     ClickUpUser,
@@ -75,15 +84,15 @@ type Sleep = Callable[[float], Awaitable[None]]
 # --- Erros -----------------------------------------------------------------
 
 
-class ClickUpError(Exception):
+class ClickUpError(ConnectorError):
     """Erro base do conector do ClickUp. A mensagem nunca contém o token."""
 
 
-class ClickUpConfigError(ClickUpError):
+class ClickUpConfigError(ClickUpError, ConnectorConfigError):
     """Configuração ausente ou inválida (por exemplo, sem `CLICKUP_API_TOKEN`)."""
 
 
-class ClickUpAuthError(ClickUpError):
+class ClickUpAuthError(ClickUpError, ConnectorAuthError):
     """HTTP 401: token inválido ou revogado. Sem retry."""
 
 
@@ -118,6 +127,70 @@ class ClickUpUnavailableError(ClickUpHTTPError):
 
 class ClickUpPaginationError(ClickUpError):
     """A paginação não terminou: página repetida ou teto de páginas atingido."""
+
+
+class ClickUpResponseError(ClickUpError):
+    """Resposta 2xx fora do formato esperado. A mensagem traz só campos e tipos de erro."""
+
+    def __init__(self, message: str, *, path: str) -> None:
+        super().__init__(message)
+        self.path = path
+
+
+# --- Resultado de uma página de tarefas --------------------------------------
+
+
+@dataclass(frozen=True)
+class InvalidTask:
+    """Tarefa que não passou na validação do schema: só o id e o motivo, sem conteúdo."""
+
+    task_id: str | None
+    reason: str
+
+
+@dataclass(frozen=True)
+class ClickUpTaskPage:
+    """Uma página de `GET /v2/team/{team_id}/task`, já validada tarefa a tarefa."""
+
+    page: int
+    tasks: list[ClickUpTask]
+    invalid: list[InvalidTask]
+    # Quantos itens vieram na resposta (válidos + inválidos); decide a página curta.
+    size: int
+
+
+def validation_reason(exc: ValidationError, *, limit: int = 5) -> str:
+    """Motivo de uma `ValidationError` só com o campo e o tipo do erro.
+
+    Não usa a mensagem do Pydantic, que pode repetir o valor recebido.
+    """
+    parts = []
+    for error in exc.errors(include_url=False, include_input=False, include_context=False)[:limit]:
+        loc = ".".join(str(part) for part in error.get("loc", ())) or "(raiz)"
+        parts.append(f"{loc}: {error.get('type', 'invalid')}")
+    extra = exc.error_count() - limit
+    if extra > 0:
+        parts.append(f"+{extra} erro(s)")
+    return "; ".join(parts)
+
+
+def _parse[M: BaseModel](model: type[M], data: Any, path: str) -> M:
+    try:
+        return model.model_validate(data)
+    except ValidationError as exc:
+        raise ClickUpResponseError(
+            f"GET {path}: resposta fora do formato esperado ({validation_reason(exc)})",
+            path=path,
+        ) from None
+
+
+def _raw_task_id(item: Any) -> str | None:
+    if isinstance(item, dict):
+        value = item.get("id")
+        if isinstance(value, (str, int)) and not isinstance(value, bool):
+            text = str(value).strip()
+            return text[:64] or None
+    return None
 
 
 # --- Autenticação ----------------------------------------------------------
@@ -292,32 +365,36 @@ class ClickUpClient:
     async def get_user(self) -> ClickUpUser:
         """`GET /v2/user`: o dono do token. Serve para validar o token no início do sync."""
         data = await self._get("/user")
-        return ClickUpUserResponse.model_validate(data).user
+        return _parse(ClickUpUserResponse, data, "/user").user
 
     async def get_teams(self) -> list[ClickUpTeam]:
         """`GET /v2/team`: workspaces visíveis ao token, com `members[].user`."""
         data = await self._get("/team")
-        return ClickUpTeamsResponse.model_validate(data).teams
+        return _parse(ClickUpTeamsResponse, data, "/team").teams
 
     async def get_spaces(self, team_id: str, *, archived: bool = False) -> list[ClickUpSpace]:
         """`GET /v2/team/{team_id}/space`."""
-        data = await self._get(f"/team/{team_id}/space", [("archived", _bool(archived))])
-        return ClickUpSpacesResponse.model_validate(data).spaces
+        path = f"/team/{team_id}/space"
+        data = await self._get(path, [("archived", _bool(archived))])
+        return _parse(ClickUpSpacesResponse, data, path).spaces
 
     async def get_folders(self, space_id: str, *, archived: bool = False) -> list[ClickUpFolder]:
         """`GET /v2/space/{space_id}/folder`. Subfolders vêm na mesma lista, com `parent_folder`."""
-        data = await self._get(f"/space/{space_id}/folder", [("archived", _bool(archived))])
-        return ClickUpFoldersResponse.model_validate(data).folders
+        path = f"/space/{space_id}/folder"
+        data = await self._get(path, [("archived", _bool(archived))])
+        return _parse(ClickUpFoldersResponse, data, path).folders
 
     async def get_folder_lists(self, folder_id: str, *, archived: bool = False) -> list[ClickUpList]:
         """`GET /v2/folder/{folder_id}/list`: lists de um folder."""
-        data = await self._get(f"/folder/{folder_id}/list", [("archived", _bool(archived))])
-        return ClickUpListsResponse.model_validate(data).lists
+        path = f"/folder/{folder_id}/list"
+        data = await self._get(path, [("archived", _bool(archived))])
+        return _parse(ClickUpListsResponse, data, path).lists
 
     async def get_folderless_lists(self, space_id: str, *, archived: bool = False) -> list[ClickUpList]:
         """`GET /v2/space/{space_id}/list`: lists fora de folders."""
-        data = await self._get(f"/space/{space_id}/list", [("archived", _bool(archived))])
-        return ClickUpListsResponse.model_validate(data).lists
+        path = f"/space/{space_id}/list"
+        data = await self._get(path, [("archived", _bool(archived))])
+        return _parse(ClickUpListsResponse, data, path).lists
 
     async def iter_task_pages(
         self,
@@ -325,14 +402,20 @@ class ClickUpClient:
         *,
         date_updated_gt: int | None = None,
         space_ids: Sequence[str] | None = None,
-    ) -> AsyncIterator[list[ClickUpTask]]:
+        custom_items: Sequence[int] | None = None,
+    ) -> AsyncIterator[ClickUpTaskPage]:
         """`GET /v2/team/{team_id}/task`, página a página (100 tarefas, `page` a partir de 0).
 
-        Envia `subtasks=true&include_closed=true`. A resposta não tem `last_page`:
-        a paginação para na primeira página com menos de 100 tarefas.
+        Envia `subtasks=true&include_closed=true`. A resposta não tem `last_page`
+        documentado: a paginação para na primeira página com menos de 100 itens.
+        Não envia `archived` (com `archived=true` a API traz **só** as arquivadas).
 
-        `date_updated_gt` é um Unix em ms (sync incremental). `space_ids` vira
-        `space_ids[]` repetido.
+        - `date_updated_gt`: Unix em ms (sync incremental).
+        - `space_ids`: vira `space_ids[]` repetido.
+        - `custom_items`: vira `custom_items[]` repetido (`0` = tarefa, `1` = marco).
+
+        Cada tarefa é validada isoladamente: as inválidas vão para
+        `ClickUpTaskPage.invalid` e não derrubam a página.
 
         Levanta `ClickUpPaginationError` se uma página começar pela mesma tarefa
         que a anterior (a API estaria ignorando `page`) ou se passar de
@@ -344,21 +427,32 @@ class ClickUpClient:
             base.append(("date_updated_gt", str(date_updated_gt)))
         for space_id in space_ids or ():
             base.append(("space_ids[]", str(space_id)))
+        for item in custom_items or ():
+            base.append(("custom_items[]", str(int(item))))
 
         previous_first_id: str | None = None
         for page in range(MAX_TASK_PAGES):
             data = await self._get(path, [*base, ("page", str(page))])
-            tasks = ClickUpTasksPage.model_validate(data).tasks
-            if not tasks:
+            items = _task_items(data, path)
+            if not items:
                 return
-            if tasks[0].id == previous_first_id:
+            first_id = _raw_task_id(items[0])
+            if first_id is not None and first_id == previous_first_id:
                 raise ClickUpPaginationError(
                     f"GET {path}: a página {page} repete a página {page - 1} "
                     "(a API parece ignorar `page`)"
                 )
-            previous_first_id = tasks[0].id
-            yield tasks
-            if len(tasks) < TASKS_PAGE_SIZE:
+            previous_first_id = first_id
+
+            tasks: list[ClickUpTask] = []
+            invalid: list[InvalidTask] = []
+            for item in items:
+                try:
+                    tasks.append(ClickUpTask.model_validate(item))
+                except ValidationError as exc:
+                    invalid.append(InvalidTask(_raw_task_id(item), validation_reason(exc)))
+            yield ClickUpTaskPage(page=page, tasks=tasks, invalid=invalid, size=len(items))
+            if len(items) < TASKS_PAGE_SIZE:
                 return
         raise ClickUpPaginationError(
             f"GET {path}: mais de {MAX_TASK_PAGES} páginas cheias "
@@ -485,6 +579,18 @@ class ClickUpClient:
             await self._sleep(wait)
 
         raise AssertionError("inalcançável")  # pragma: no cover
+
+
+def _task_items(data: Any, path: str) -> list[Any]:
+    """A lista `tasks` de uma página, sem validar cada item (isso é feito tarefa a tarefa)."""
+    if not isinstance(data, dict):
+        raise ClickUpResponseError(f"GET {path}: resposta não é um objeto JSON", path=path)
+    items = data.get("tasks")
+    if items is None:
+        return []
+    if not isinstance(items, list):
+        raise ClickUpResponseError(f"GET {path}: `tasks` não é uma lista", path=path)
+    return items
 
 
 def _error_detail(response: httpx.Response) -> str:
