@@ -21,7 +21,8 @@ export default defineConfig(({ mode }) => {
       // Front e API na mesma origem: sem CORS. Na Fase 2, o cookie de sessão
       // e o callback do OAuth também passam por aqui.
       proxy: {
-        '/api': { target: apiProxyTarget },
+        // A barra final evita capturar rotas do front como /apidocs.
+        '/api/': { target: apiProxyTarget },
       },
     },
     // O `vite preview` herda host e proxy de `server`.

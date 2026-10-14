@@ -5,11 +5,12 @@ Vite + React + TypeScript, com TanStack Query e React Router.
 ## Comandos (dentro de `frontend/`)
 
 ```bash
-npm install          # instala as dependências (package-lock.json versionado)
+npm ci               # instala exatamente o que está no package-lock.json
+npm install          # instala ou atualiza dependências (atualiza o lockfile)
 npm run dev          # servidor de desenvolvimento em http://localhost:5173
 npm run build        # checagem de tipos (tsc -b) e build de produção em dist/
 npm run preview      # serve o build de dist/
-npm run typecheck    # tsc --noEmit
+npm run typecheck    # tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json
 npm run lint         # oxlint
 ```
 
