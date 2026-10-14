@@ -113,7 +113,7 @@ class ListingReport:
       para não marcá-los como excluídos. Um descartado **sem id** torna a
       listagem parcial.
     - `parts`: as buscas que compõem a listagem, por nome (nas tarefas do
-      ClickUp: `archived`, `milestones` e `tasks`). A listagem só é completa se
+      ClickUp: `archived`, `archived_milestones`, `milestones` e `tasks`). A listagem só é completa se
       todas terminaram sem erro. Vazio quando a listagem é uma busca só.
     - `finished`: a iteração foi até o fim. Uma iteração interrompida pelo
       consumidor (ou por exceção) não conta como completa.
@@ -267,7 +267,9 @@ class Connector(Protocol):
 
         Erros num recurso abaixo do workspace (space, folder, list) **não** saem
         como exceção: vão para `report.errors` e a estrutura fica parcial. Um
-        403/404 deixa a busca seguir; outros erros a interrompem ali.
+        403/404 ou uma resposta 200 fora do formato deixa a busca seguir para os
+        outros recursos; outros erros (5xx, 429 ou timeout persistentes) a
+        interrompem ali.
 
         Exceções (o sync trata todas como fatais: run `failed`):
         - `ConnectorAuthError`: credencial inválida ou revogada (401);

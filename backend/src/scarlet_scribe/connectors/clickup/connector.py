@@ -9,12 +9,14 @@
   `report.errors`, e a busca segue para os outros. A listagem fica parcial.
   Outros erros (5xx, 429 ou timeout persistentes) também vão para
   `report.errors`, mas interrompem a busca da estrutura.
-- Tarefas: três buscas no mesmo endpoint, com os mesmos filtros, unidas sem
-  repetir ids, nesta ordem: `archived` (`archived=true`, só arquivadas),
-  `milestones` (`custom_items[]=1`, se `fetch_milestones_separately`) e
-  `tasks` (a padrão). Vale a primeira aparição de cada id; como as arquivadas
-  vêm antes, uma tarefa que aparece também em outra busca sai com
-  `archived=True`, e `is_milestone` vem sempre do `custom_item_id` do payload.
+- Tarefas: até quatro buscas no mesmo endpoint, com os mesmos filtros, unidas
+  sem repetir ids, nesta ordem: `archived` (`archived=true`, só arquivadas),
+  `archived_milestones` (`archived=true&custom_items[]=1`), `milestones`
+  (`custom_items[]=1`) e `tasks` (a padrão). As duas de marcos dependem de
+  `fetch_milestones_separately` e são ligadas ou desligadas juntas. Vale a
+  primeira aparição de cada id; como as arquivadas vêm antes, uma tarefa que
+  aparece também em outra busca sai com `archived=True`, e `is_milestone` vem
+  sempre do `custom_item_id` do payload.
   Um erro numa busca (qualquer um, menos 401 e configuração) vai para
   `report.errors`, encerra aquela busca e a listagem segue para a próxima;
   a listagem fica parcial.
@@ -80,11 +82,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Busca extra de marcos (`custom_items[]=1`), unida à busca padrão sem duplicar.
-# O spike não conseguiu confirmar que a busca sem `custom_items[]` traz os marcos
-# (o workspace de teste não tem nenhum). Custa cerca de uma página a mais por
-# sync. Quando o comportamento for confirmado, basta trocar para False (ou passar
-# `fetch_milestones_separately=False`).
+# Buscas extras de marcos (`custom_items[]=1`), ativas e arquivadas, unidas às
+# demais sem duplicar. O spike não conseguiu confirmar que a busca sem
+# `custom_items[]` traz os marcos (o workspace de teste não tem nenhum); sem a
+# busca de marcos arquivados, um marco arquivado sumiria da listagem e ganharia
+# `deleted_at`. Custam cerca de duas páginas a mais por sync. Quando o
+# comportamento for confirmado, basta trocar para False (ou passar
+# `fetch_milestones_separately=False`), o que desliga as duas juntas.
 FETCH_MILESTONES_SEPARATELY = True
 
 
@@ -100,6 +104,9 @@ class _TaskSearch:
 # Ordem importa: vale a primeira aparição de cada id, e as arquivadas vêm antes
 # para que `archived=True` prevaleça sobre uma aparição nas outras buscas.
 _ARCHIVED_SEARCH = _TaskSearch("archived", archived=True)
+_ARCHIVED_MILESTONES_SEARCH = _TaskSearch(
+    "archived_milestones", archived=True, custom_items=(MILESTONE_CUSTOM_ITEM_ID,)
+)
 _MILESTONES_SEARCH = _TaskSearch("milestones", custom_items=(MILESTONE_CUSTOM_ITEM_ID,))
 _DEFAULT_SEARCH = _TaskSearch("tasks")
 
@@ -306,10 +313,12 @@ class ClickUpConnector:
     def iter_tasks(self, *, updated_since: datetime | None = None) -> TaskListing:
         """Tarefas em lotes (uma página por lote): `incremental` com `updated_since`, `full` sem.
 
-        Três buscas com os mesmos filtros (subtarefas e fechadas incluídas,
-        `space_ids[]` e, no incremental, `date_updated_gt`), unidas sem repetir
-        ids: `archived` (`archived=true`), `milestones` (`custom_items[]=1`, se
-        `fetch_milestones_separately`) e `tasks` (a padrão). Cada uma aparece em
+        Até quatro buscas com os mesmos filtros (subtarefas e fechadas
+        incluídas, `space_ids[]` e, no incremental, `date_updated_gt`), unidas
+        sem repetir ids, nesta ordem: `archived` (`archived=true`),
+        `archived_milestones` (`archived=true&custom_items[]=1`), `milestones`
+        (`custom_items[]=1`) e `tasks` (a padrão). As duas de marcos só rodam
+        com `fetch_milestones_separately`. Cada busca aparece em
         `report.parts`; a listagem só é completa se todas terminaram sem erro.
         """
         date_updated_gt = datetime_to_ms(updated_since) if updated_since is not None else None
@@ -319,7 +328,7 @@ class ClickUpConnector:
     def _task_searches(self) -> list[_TaskSearch]:
         searches = [_ARCHIVED_SEARCH]
         if self._fetch_milestones_separately:
-            searches.append(_MILESTONES_SEARCH)
+            searches += [_ARCHIVED_MILESTONES_SEARCH, _MILESTONES_SEARCH]
         searches.append(_DEFAULT_SEARCH)
         return searches
 
