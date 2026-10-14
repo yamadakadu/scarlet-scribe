@@ -18,9 +18,9 @@ Work happens in two phases:
 
 **Do not build Phase 2 pieces (auth, sessions, OAuth, `time_entries`) during Phase 1.** Sections marked "(Fase 2)" in `ARCHITECTURE.md` describe the agreed design for later.
 
-`PLANO_DE_EXECUCAO.md` lists every task with its owning agent (Maestro, the orchestrator; Alicerce, Batedor, Conector, Arquivista, Sincronista, Portal, Vitrine and Revisor), dependencies, waves, file-ownership boundaries and done criteria. When acting as one of those agents, change only files in that agent's area, and report divergences from `ARCHITECTURE.md` to the Maestro instead of editing it.
+`PLANO_DE_EXECUCAO.md` lists every task with its owning agent (Maestro, the orchestrator; Alicerce, Batedor, Conector, Arquivista, Sincronista, Portal, Vitrine and Revisor; Guardião and Ponte join in Phase 2), dependencies, waves, file-ownership boundaries and done criteria. When acting as one of those agents, change only files in that agent's area, and report divergences from `ARCHITECTURE.md` to the Maestro instead of editing it.
 
-Agent definitions live in `.claude/agents/`. Each agent works in its own worktree on the branch `<agente>/<feature>`, and every commit subject starts with `<agente>/<feature>: `.
+Agent definitions live in `.claude/agents/`. Each agent works in its own worktree on the branch `<agente>/<feature>`, and every commit subject starts with `<agente>/<feature>: `. The Maestro creates each worktree with `python3 .claude/scripts/novo_worktree.py <agente> <feature>`. The script branches from `main` into `.claude/worktrees/<agente>-<feature>` and links the worktree's `.env` to the main tree's `.env`, which worktrees don't otherwise get because it's gitignored.
 
 Hooks enforce these rules. The policy is in `.claude/hooks/policy.json`; the hook scripts are in `.claude/hooks/` (Claude Code) and `.githooks/` (git pre-commit and commit-msg). See `PLANO_DE_EXECUCAO.md` › "Hooks". If a hook blocks you, never bypass it: no `--no-verify`, no `core.hooksPath` change, no renaming or moving files to dodge a rule. Unstage the file, report to the Maestro, and let the user decide. After changing the policy or a hook, run `python3 .claude/hooks/selfcheck.py`.
 
@@ -32,7 +32,7 @@ Hooks enforce these rules. The policy is in `.claude/hooks/policy.json`; the hoo
 
 ## Architecture rules
 
-- **Never write to ClickUp.** Connectors are read-only. The bot token only has read permissions, and that is a product requirement.
+- **Never write to ClickUp.** Connectors are read-only, and that is a product requirement. ClickUp has no read-only tokens: the bot's token can do whatever the bot's workspace role allows. Read-only access therefore rests on the bot's role and on the code using only GET.
 - Tool-specific types stay inside `connectors/<tool>/`. Everything else uses the canonical models in `domain/`, keyed by `(source, external_id)`.
 - API requests read only from our own database. They never call ClickUp directly, with one exception: the OAuth callback exchanges the code for a token and calls `GET /v2/user` and `GET /v2/team`. Data from ClickUp only gets into our database through the sync, which runs in the worker.
 - Sync runs come from the scheduler or from the UI's "Sincronizar agora" button (`POST /sync` → `sync_runs` row with status `pending` → picked up by the worker). Only one sync runs at a time (Postgres advisory lock), and manual syncs have a cooldown. Respect ClickUp's `X-RateLimit-*` headers and back off on HTTP 429.

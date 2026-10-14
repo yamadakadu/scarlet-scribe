@@ -233,12 +233,12 @@ Fonte: a referência oficial em <https://developer.clickup.com/reference>, consu
 | Lists fora de folders | `GET /v2/space/{space_id}/list?archived=false` | |
 | Tarefas | `GET /v2/team/{team_id}/task` | Ver os detalhes logo abaixo da tabela |
 | Horas (Fase 2) | `GET /v2/team/{team_id}/time_entries` | Chamado **com o token OAuth de cada pessoa**. Ver os detalhes logo abaixo da tabela |
-| Tipos de tarefa | `GET /v2/team/{team_id}/custom_item` | Retorna `custom_items[]` com `id`, `name`, `name_plural` e `description`. Usamos para mostrar o nome do tipo (por exemplo "Bug") |
 
 **Tarefas (`GET /v2/team/{team_id}/task`, "Get Filtered Team Tasks"):**
 - Retorna **100 tarefas por página**, com `page` começando em 0.
 - **A resposta deste endpoint não tem `last_page`.** O campo só existe em `GET /v2/list/{list_id}/task`. Por isso, o cliente para de paginar quando uma página volta com menos de 100 tarefas.
 - Por padrão, subtarefas e tarefas fechadas ficam de fora. Por isso enviamos `subtasks=true&include_closed=true`.
+- Quando `CLICKUP_SPACE_IDS` está definido, enviamos também `space_ids[]` com esses spaces.
 - Filtros úteis:
   - `date_updated_gt` e `date_updated_lt`, para o sync incremental;
   - `order_by` (`id`, `created`, `updated` ou `due_date`) e `reverse`;
@@ -269,6 +269,7 @@ Fonte: a referência oficial em <https://developer.clickup.com/reference>, consu
 
 | Endpoint | Para quê | Observações |
 |---|---|---|
+| `GET /v2/team/{team_id}/custom_item` | Tipos de tarefa, para mostrar o nome do tipo (por exemplo "Bug") | Retorna `custom_items[]` com `id`, `name`, `name_plural` e `description`. Fora da Fase 1, que só precisa saber se a tarefa é marco (`custom_item_id == 1`); o `custom_item_id` de cada tarefa continua no `raw` |
 | `GET /v2/list/{list_id}/task` | Tarefas de uma list específica | Tem `last_page` e o parâmetro `archived`. Só inclui tarefas cuja list "principal" é aquela; `include_timl=true` traz também as tarefas que estão em várias lists |
 | `GET /v2/task/{task_id}` | Detalhe de uma tarefa | Aceita `include_subtasks`, `include_markdown_description` e `custom_task_ids` (este exige `team_id`). Não retorna Docs anexados |
 | `GET /v2/list/{list_id}/field` | Definições de campos customizados | Também existem as variantes por folder, space e workspace (`getfolderavailablefields`, `getspaceavailablefields`, `getteamavailablefields`) |
@@ -299,7 +300,7 @@ Fonte: a referência oficial em <https://developer.clickup.com/reference>, consu
 | `Workspace` | team | |
 | `Container` | space / folder / list | Árvore com `kind` (`space`, `folder` ou `list`) e `parent_id`. A UI chama de "projeto" |
 | `Person` | membro do team (`user.id`, `username`, `email`) | |
-| `Task` | task | `name`, `status.status` e o tipo do status, `priority`, `start_date`, `due_date`, `date_done`, `time_estimate`, assignees, list (container), `parent` (subtarefa), `url`, `is_milestone`, `date_updated` |
+| `Task` | task | `name`, `status.status` e o tipo do status, `priority`, `start_date`, `due_date`, `date_done`, `time_estimate`, assignees, list (container), `parent` (subtarefa), `url`, `is_milestone`, `date_updated`. O id da list e o id do pai ficam também como ids externos, porque o container ou a tarefa-pai podem não estar no banco (ver "Banco de dados"). Um assignee que não está nos members do team vira uma `Person` com os dados que vêm na própria tarefa (`id`, `username`, `email`) |
 | `TimeEntry` (Fase 2) | time entry, buscada com o token da pessoa | `user` → person (deve ser sempre o dono do token; se vier outro, a entrada é descartada e o caso vai para o log), `task.id` → task (pode ser nulo), `start`, `end`, `duration`, `billable`, `description`. Uma duração negativa indica timer em andamento: salva com `end=null` e `is_running=true`. Se a tarefa ainda não existir no banco (por exemplo, numa list que o bot não enxerga), `task_id` fica nulo e o id original fica guardado em `external_task_id` |
 
 ## Banco de dados
@@ -312,8 +313,10 @@ Convenções para todas as tabelas sincronizadas:
 
 Tabelas da **Fase 1**:
 - `workspaces`, `containers`, `people`
-- `tasks`, mais `task_assignees` (N:N com `people`)
-- `sync_runs`: `id`, `trigger` (`scheduled` | `manual`), `status` (`pending` | `running` | `succeeded` | `partial` | `failed`), `requested_at`, `started_at`, `finished_at`, `stats` (JSONB com contadores por entidade: criados, atualizados, removidos), `error`
+- `tasks`, mais `task_assignees` (N:N com `people`). Duas FKs aceitam nulo e têm um id externo ao lado:
+  - `container_id` e `external_container_id`: a tarefa pode estar numa list que não está no banco (arquivada, ou num space fora de `CLICKUP_SPACE_IDS`). A UI mostra essas tarefas como "sem projeto";
+  - `parent_id` e `external_parent_id`: a subtarefa pode chegar antes da tarefa-pai, ou o pai pode não ser visível ao bot. Ao fim de cada passo de tarefas, um único `UPDATE` preenche `parent_id` (e `container_id`) a partir dos ids externos.
+- `sync_runs`: `id`, `trigger` (`scheduled` | `manual`), `status` (`pending` | `running` | `succeeded` | `partial` | `failed`), `requested_at`, `started_at`, `finished_at`, `stats` (JSONB com contadores por entidade: criados, atualizados, removidos), `error`. Um **índice único parcial** garante no máximo um run `pending` ou `running` por vez (`CREATE UNIQUE INDEX ... ON sync_runs ((true)) WHERE status IN ('pending', 'running')`)
 - `sync_state`: o "watermark" de cada `(source, resource)`, por exemplo o último `date_updated` visto nas tarefas e a data da última reconciliação completa
 
 Tabelas da **Fase 2**, criadas numa migration própria:
@@ -338,7 +341,9 @@ Os passos rodam em ordem. Cada um faz commit próprio, então uma falha num pass
 
 1. **Estrutura:** workspace, members, spaces, folders e lists. Sempre completo, porque são poucas chamadas. Containers que sumiram ganham `deleted_at`.
 2. **Tarefas, modo incremental:** `date_updated_gt = watermark − 5 min`. A margem cobre diferenças de relógio e atualizações concorrentes. Upsert de tudo o que vier, depois o watermark avança.
-3. **Tarefas, reconciliação completa:** roda a cada `SYNC_FULL_RECONCILE_HOURS` e no primeiro sync. Busca todas as tarefas e marca com `deleted_at` as que não voltaram. Esse passo é necessário porque o modo incremental não detecta exclusões.
+3. **Tarefas, reconciliação completa:** roda a cada `SYNC_FULL_RECONCILE_HOURS` e no primeiro sync. Busca todas as tarefas e marca com `deleted_at` as que não voltaram. Esse passo é necessário porque o modo incremental não detecta exclusões. **Quando a reconciliação roda, ela substitui o passo 2** naquele sync, para não buscar as tarefas duas vezes, e o watermark avança do mesmo jeito.
+
+**Exclusões só com listagem completa (passos 1 e 3):** um registro só ganha `deleted_at` se a listagem daquele passo terminou sem nenhum erro. Se alguma chamada falhou (página no meio da paginação, 403/404 num space ou folder, timeout), o passo grava os upserts normalmente, **não marca nenhuma exclusão** e registra `deletions_skipped: true` em `stats`. Sem essa regra, uma falha parcial apagaria dados que continuam existindo no ClickUp.
 4. **(Fase 2) Horas, uma vez por conexão `active`:** roda para todas as conexões, até `SYNC_TIME_ENTRIES_CONCURRENCY` pessoas em paralelo. Para cada pessoa:
    - decifra o token e cria um cliente próprio, que tem seu próprio rate limit;
    - busca a janela `[agora − SYNC_TIME_ENTRIES_WINDOW_DAYS, agora]` em `GET /v2/team/{team_id}/time_entries`, **sem `assignee`**. Na primeira vez dessa pessoa, a janela usa `SYNC_BACKFILL_DAYS`;
@@ -356,7 +361,7 @@ Status final:
 ### Worker e fila
 
 - O worker roda em processo próprio: `scarlet-scribe-worker`.
-- O **APScheduler** cria um `sync_run` com `trigger=scheduled` e `status=pending` a cada `SYNC_INTERVAL_MINUTES`. Ele não cria um run novo se já houver um `pending` ou `running`.
+- O **APScheduler** cria um `sync_run` com `trigger=scheduled` e `status=pending` a cada `SYNC_INTERVAL_MINUTES`. Ele não cria um run novo se já houver um `pending` ou `running`: o conflito no índice único parcial de `sync_runs` é simplesmente ignorado.
 - Um loop consulta a fila a cada ~3 s e "pega" o run `pending` mais antigo com `SELECT ... FOR UPDATE SKIP LOCKED`, marcando-o como `running`.
 - Um **advisory lock do Postgres** (chave fixa) envolve a execução. Isso garante um único sync por vez mesmo se, por engano, subirem dois workers.
 - Ao iniciar, o worker marca como `failed` ("interrompido") os runs que ficaram em `running`, que seriam sobras de um crash.
@@ -365,7 +370,7 @@ Status final:
 
 Todas as rotas usam o prefixo `/api/v1` e respondem em JSON, com datas em ISO 8601 UTC. O OpenAPI fica em `/api/v1/openapi.json` e é dele que o cliente TypeScript do front é gerado.
 
-**Paginação** nas listagens: `?limit=50&offset=0` (limite máximo de 200). A resposta tem o formato `{ "items": [...], "total": 123 }`.
+**Paginação** nas listagens: `?limit=50&offset=0` (limite máximo de 200). A resposta tem o formato `{ "items": [...], "total": 123 }`. A exceção é `GET /projects`: ele devolve a árvore inteira, sem `limit`/`offset`, mas no mesmo formato `{ items, total }`.
 
 **Erros:** formato padrão do FastAPI (`{ "detail": ... }`):
 - 404 para id inexistente;
@@ -392,7 +397,7 @@ Todas as rotas usam o prefixo `/api/v1` e respondem em JSON, com datas em ISO 86
 | Método e rota | Filtros (query) | Retorno |
 |---|---|---|
 | `GET /health` | — | Status da API, do banco e do último sync |
-| `GET /projects` | `kind`, `parent_id` | Árvore space/folder/list |
+| `GET /projects` | `kind`, `parent_id` | Árvore space/folder/list, sem paginação |
 | `GET /people` | `q` | Members |
 | `GET /tasks` | `container_id`, `status`, `assignee_id`, `due_from`, `due_to`, `is_milestone`, `include_closed` (padrão `false`), `q` (busca no nome), `order_by` (`due_date`, `updated_at` ou `name`) | Lista paginada |
 | `GET /tasks/{id}` | — | Detalhe da tarefa, com assignees e subtarefas. (Fase 2) Ganha o total de horas, que soma **só as entradas sincronizadas**, ou seja, as das pessoas conectadas. Por isso vem acompanhado de `time_tracked_coverage`, que diz quantos assignees estão conectados. Enquanto a regra de visibilidade não for definida, mostra só o total, sem detalhar por pessoa |
@@ -408,7 +413,7 @@ Registros com `deleted_at` preenchido nunca aparecem nas respostas.
 
 | Método e rota | Comportamento |
 |---|---|
-| `POST /sync` | Pede um sync manual. **202** com o run criado (`pending`). Se já houver um run `pending` ou `running`, devolve **200** com esse run, e o front só passa a acompanhá-lo. Se o último sync manual começou há menos de `SYNC_MANUAL_COOLDOWN_SECONDS`, responde **429** com o header `Retry-After` |
+| `POST /sync` | Pede um sync manual. As verificações seguem esta ordem: (1) se já houver um run `pending` ou `running`, devolve **200** com esse run, e o front só passa a acompanhá-lo; (2) senão, se o `requested_at` do último run manual foi há menos de `SYNC_MANUAL_COOLDOWN_SECONDS`, responde **429** com `Retry-After` igual aos segundos que faltam; (3) senão, cria o run e devolve **202** com ele (`pending`). Se a inserção bater no índice único parcial de `sync_runs` (dois pedidos ao mesmo tempo), devolve **200** com o run que já existe |
 | `GET /sync/runs/latest` | O run mais recente, que o front consulta a cada ~2 s enquanto ele estiver `pending` ou `running` |
 | `GET /sync/runs` | Histórico paginado dos runs |
 
