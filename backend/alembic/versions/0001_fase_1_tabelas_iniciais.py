@@ -76,6 +76,7 @@ def upgrade() -> None:
         *_synced_head(),
         sa.Column("workspace_id", sa.Uuid(), nullable=False),
         sa.Column("parent_id", sa.Uuid(), nullable=True),
+        sa.Column("external_parent_id", sa.Text(), nullable=True),
         sa.Column("kind", sa.String(length=32), nullable=False),
         sa.Column("name", sa.Text(), nullable=False),
         *_synced_tail(),
@@ -141,6 +142,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_tasks_due_date"), "tasks", ["due_date"])
     op.create_index(op.f("ix_tasks_container_id"), "tasks", ["container_id"])
     op.create_index(op.f("ix_tasks_is_milestone"), "tasks", ["is_milestone"])
+    op.create_index(op.f("ix_tasks_parent_id"), "tasks", ["parent_id"])
 
     op.create_table(
         "task_assignees",
@@ -160,6 +162,7 @@ def upgrade() -> None:
             ondelete="CASCADE",
         ),
     )
+    op.create_index(op.f("ix_task_assignees_person_id"), "task_assignees", ["person_id"])
 
     op.create_table(
         "sync_runs",

@@ -35,7 +35,13 @@ class WorkspaceRow(SyncedMixin, Base):
 
 
 class ContainerRow(SyncedMixin, Base):
-    """Space, folder ou list, numa única árvore (`parent_id`)."""
+    """Space, folder ou list, numa única árvore (`parent_id`).
+
+    `external_id` e `external_parent_id` levam o nível como prefixo
+    (`space:123`, `folder:456`, `list:789`), porque a origem não garante ids
+    distintos entre níveis. `parent_id` aceita nulo e é preenchido pelo sync a
+    partir de `external_parent_id`, com o mesmo `UPDATE` usado em `tasks`.
+    """
 
     __tablename__ = "containers"
 
@@ -43,6 +49,7 @@ class ContainerRow(SyncedMixin, Base):
     parent_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("containers.id", ondelete="SET NULL")
     )
+    external_parent_id: Mapped[str | None] = mapped_column(Text)
     kind: Mapped[ContainerKind] = mapped_column(text_enum(ContainerKind, "kind"))
     name: Mapped[str] = mapped_column(Text)
 
@@ -77,6 +84,9 @@ task_assignees = Table(
         "person_id",
         ForeignKey("people.id", ondelete="CASCADE"),
         primary_key=True,
+        # A PK (task_id, person_id) não atende buscas só por person_id
+        # (filtro assignee_id e o CASCADE a partir de people).
+        index=True,
     ),
 )
 
@@ -87,7 +97,8 @@ class TaskRow(SyncedMixin, Base):
     `container_id` e `parent_id` aceitam nulo: o container ou a tarefa-pai
     podem não estar no banco. Os ids da origem ficam ao lado
     (`external_container_id`, `external_parent_id`) para o sync preencher as
-    FKs depois, num único `UPDATE`.
+    FKs depois, num único `UPDATE`. `external_container_id` leva o prefixo do
+    nível, como o `external_id` de `containers` (por exemplo `list:789`).
     """
 
     __tablename__ = "tasks"
@@ -109,7 +120,7 @@ class TaskRow(SyncedMixin, Base):
     )
     external_container_id: Mapped[str | None] = mapped_column(Text)
     parent_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("tasks.id", ondelete="SET NULL")
+        ForeignKey("tasks.id", ondelete="SET NULL"), index=True
     )
     external_parent_id: Mapped[str | None] = mapped_column(Text)
 

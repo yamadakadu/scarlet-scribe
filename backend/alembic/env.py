@@ -20,9 +20,7 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Metadata dos modelos para o autogenerate. Fica a cargo de quem cria as
-# tabelas (db/): por exemplo, `from scarlet_scribe.db.models import Base` e
-# `target_metadata = Base.metadata`.
+# Metadata dos modelos (db/models.py), usada pelo autogenerate.
 target_metadata = Base.metadata
 
 

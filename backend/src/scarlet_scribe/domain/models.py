@@ -36,12 +36,21 @@ class Workspace(SourceRecord):
 
 
 class Container(SourceRecord):
+    """Nó da árvore space/folder/list.
+
+    Os ids de container (`external_id`, `external_parent_id` aqui e
+    `Task.external_container_id`) levam o nível como prefixo, por exemplo
+    `space:123`, `folder:456` e `list:789`, porque a origem não garante ids
+    distintos entre níveis. Quem monta o prefixo é o mapper do conector.
+    """
+
     kind: ContainerKind
     name: str
     external_workspace_id: str
     external_parent_id: str | None = Field(
         default=None,
-        description="Id na origem do container pai; nulo para o nível mais alto (space)",
+        description="Id do container pai, com o prefixo do nível (por exemplo 'folder:456'); "
+        "nulo para o nível mais alto (space)",
     )
 
 
@@ -71,7 +80,8 @@ class Task(SourceRecord):
         default=None, description="Última alteração na origem; base do watermark do sync"
     )
     external_container_id: str | None = Field(
-        default=None, description="Id na origem do container (list) da tarefa"
+        default=None,
+        description="Id do container (list) da tarefa, com o prefixo do nível (por exemplo 'list:789')",
     )
     external_parent_id: str | None = Field(
         default=None, description="Id na origem da tarefa-pai, se for subtarefa"
