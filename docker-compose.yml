@@ -1,0 +1,72 @@
+# Ambiente de desenvolvimento local (Fase 1): postgres, api e worker.
+# O serviço frontend entra na F1-12.
+#
+# Os valores de banco têm padrão de desenvolvimento aqui mesmo, então o
+# postgres sobe sem .env. O .env da raiz (opcional) fornece o token do bot e
+# as demais variáveis; o DATABASE_URL abaixo aponta para o serviço postgres e
+# prevalece sobre o do .env dentro dos containers.
+
+x-backend: &backend
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
+  env_file:
+    - path: .env
+      required: false
+  environment:
+    DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-scarlet_scribe}
+  volumes:
+    - ./backend/src:/app/src
+    - ./backend/alembic:/app/alembic
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-scarlet_scribe}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Aplica as migrations uma vez e sai; api e worker só sobem depois dele.
+  migrate:
+    <<: *backend
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # O merge `<<:` é raso: cada serviço declara o próprio depends_on completo.
+  api:
+    <<: *backend
+    command: ["uvicorn", "scarlet_scribe.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app/src"]
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  worker:
+    <<: *backend
+    command: ["scarlet-scribe-worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:

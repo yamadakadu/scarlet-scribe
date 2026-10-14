@@ -1,0 +1,26 @@
+[project]
+name = "scarlet-scribe"
+version = "0.1.0"
+description = "Camada de integração com ferramentas corporativas (ClickUp primeiro): sync somente leitura para o nosso banco e API de leitura."
+readme = "README.md"
+authors = [
+    { name = "Carlos Yamada", email = "yamadakadu@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.20.0",
+    "apscheduler>=3.11.3",
+    "asyncpg>=0.32.0",
+    "fastapi>=0.143.1",
+    "httpx>=0.28.1",
+    "pydantic-settings>=2.16.0",
+    "sqlalchemy[asyncio]>=2.1.4",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[project.scripts]
+scarlet-scribe-worker = "scarlet_scribe.sync.worker:main"
+
+[build-system]
+requires = ["uv_build>=0.12.10,<0.13.0"]
+build-backend = "uv_build"
