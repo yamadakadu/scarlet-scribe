@@ -23,12 +23,17 @@ G3. **Commits, por repositório não arquivado e não vazio:** desde o watermark
     `INITIAL_COMMITS_WINDOW`. Commits nunca ganham `deleted_at`.
 
 Um 403/404 na listagem de MRs ou commits de um repositório é "recurso
-indisponível": não deixa o run parcial e não avança o watermark.
+indisponível": não deixa o run parcial e não avança o watermark. O watermark de
+MRs e commits nunca passa do início da listagem (datas no futuro na origem).
 
 Cada fonte tem o próprio desfecho: uma fonte que falha (inclusive com 401)
 deixa o run `partial`, sem desfazer o que a outra gravou; o run só termina
-`failed` se todas as fontes falharam. Os contadores do ClickUp ficam no nível de
-cima de `stats`, como antes; os do GitLab, em `stats.gitlab`.
+`failed` se todas as fontes falharam. Uma fonte não configurada (ClickUp sem token
+ou sem team; GitLab sem `gitlab_enabled`) é pulada: fica fora do desfecho e
+aparece em `stats` como `{source, skipped: true, reason}`. Sem nenhuma fonte
+configurada, o run termina `failed` ("nenhuma fonte configurada"). Os contadores
+do ClickUp ficam no nível de cima de `stats`, como antes; os do GitLab, em
+`stats.gitlab`.
 
 Cada passo grava numa transação própria (uma falha num passo não desfaz os
 anteriores) e, na mesma transação, atualiza `sync_runs.stats`, para a UI ver o
@@ -72,6 +77,7 @@ from scarlet_scribe.connectors.base import (
 )
 from scarlet_scribe.connectors.factory import (
     CODE_SOURCE,
+    DEFAULT_SOURCE,
     create_code_connector,
     create_connector,
 )
@@ -205,7 +211,7 @@ class _CodeSourceState:
         self.unavailable.append(
             {"resource": resource, "repository": repository_id, "status_codes": status_codes}
         )
-        logger.info(
+        logger.warning(
             "%s: %s do repositório %s indisponíveis (HTTP %s); watermark mantido",
             self.source, resource, repository_id, "/".join(map(str, status_codes)),
         )
@@ -216,7 +222,9 @@ class _RunState:
     """O que um run acumula: contadores, relatórios e o desfecho.
 
     Os campos do nível de cima são os do ClickUp (formato de `stats` anterior à
-    Fase M). `code` guarda o estado da fonte de código, quando configurada.
+    Fase M). `code` guarda o estado da fonte de código, quando configurada. Uma
+    fonte não configurada é pulada (`clickup_skipped`, `code_skipped`) e fica
+    fora do desfecho do run.
     """
 
     counters: dict[str, _Counter] = field(
@@ -229,14 +237,21 @@ class _RunState:
     wrote: bool = False  # algum passo gravou (commit) dados
     partial: bool = False  # algum passo ficou parcial ou falhou sem ser fatal
     fatal: str | None = None  # erro fatal do ClickUp: a fonte falhou
+    clickup_skipped: str | None = None  # motivo de o ClickUp não ter rodado
     code: _CodeSourceState | None = None
     code_skipped: str | None = None  # motivo de a fonte de código não ter rodado
 
     def stats(self, *, final: bool = False) -> dict[str, Any]:
-        data: dict[str, Any] = dict(self.extra)
-        data.update({name: counter.to_dict() for name, counter in self.counters.items()})
-        if self.errors:
-            data["errors"] = list(self.errors)
+        if self.clickup_skipped is not None:
+            # No lugar dos passos do ClickUp (que ficam no nível de cima).
+            data: dict[str, Any] = {
+                "source": DEFAULT_SOURCE, "skipped": True, "reason": self.clickup_skipped
+            }
+        else:
+            data = dict(self.extra)
+            data.update({name: counter.to_dict() for name, counter in self.counters.items()})
+            if self.errors:
+                data["errors"] = list(self.errors)
         if self.code is not None:
             data[self.code.source] = self.code.stats(final=final)
         elif self.code_skipped is not None:
@@ -256,14 +271,22 @@ class _RunState:
     def clickup_failed(self) -> bool:
         return self.fatal is not None or not self.wrote
 
-    def final_status(self) -> SyncStatus:
-        """`failed` só se todas as fontes falharam; `partial` se alguma falhou ou
-        ficou parcial. Só com o ClickUp, é a regra anterior à Fase M."""
-        outcomes = [(self.clickup_failed, self.partial)]
+    def _outcomes(self) -> list[tuple[bool, bool]]:
+        """`(falhou, parcial)` de cada fonte que rodou (as puladas ficam de fora)."""
+        outcomes = []
+        if self.clickup_skipped is None:
+            outcomes.append((self.clickup_failed, self.partial))
         if self.code is not None:
             outcomes.append((self.code.failed, self.code.partial))
+        return outcomes
+
+    def final_status(self) -> SyncStatus:
+        """`failed` se todas as fontes que rodaram falharam, ou se nenhuma rodou
+        (nada configurado: nada foi sincronizado); `partial` se alguma falhou ou
+        ficou parcial. Só com o ClickUp, é a regra anterior à Fase M."""
+        outcomes = self._outcomes()
         failed = sum(1 for source_failed, _ in outcomes if source_failed)
-        if failed == len(outcomes):
+        if failed == len(outcomes):  # inclusive sem nenhuma fonte
             return SyncStatus.FAILED
         if failed or any(source_partial for _, source_partial in outcomes):
             return SyncStatus.PARTIAL
@@ -272,12 +295,14 @@ class _RunState:
     def final_error(self, status: SyncStatus) -> str | None:
         """`sync_runs.error`: o erro de cada fonte que falhou. Só com o ClickUp, o
         texto é o de antes da Fase M (sem prefixo, e só em run `failed`)."""
-        if self.code is None:
+        if self.clickup_skipped is None and self.code is None:
             if status is SyncStatus.FAILED:
                 return self.fatal or "nenhum dado foi gravado"
             return None
+        if not self._outcomes():
+            return "nenhuma fonte configurada"
         messages = []
-        if self.clickup_failed:
+        if self.clickup_skipped is None and self.clickup_failed:
             messages.append(f"clickup: {self.fatal or 'nenhum dado foi gravado'}")
         if self.code.failed:
             messages.append(f"{self.code.source}: {self.code.fatal or 'nenhum dado foi gravado'}")
@@ -291,7 +316,8 @@ class SyncService:
     """Executa um run de sync que o worker já marcou como `running`.
 
     - `connector_factory`: devolve um `Connector` novo (ainda não aberto). O
-      padrão é `create_connector(settings)`.
+      padrão é `create_connector(settings)`; sem fábrica própria, o ClickUp só
+      roda se o token e o team estiverem configurados (senão, é pulado).
     - `sessionmaker`: o padrão é o do processo (`db/session.py`).
     """
 
@@ -305,16 +331,23 @@ class SyncService:
         self._settings = settings
         self._sessionmaker = sessionmaker or get_sessionmaker()
         self._connector_factory = connector_factory or partial(create_connector, settings)
+        self._clickup_enabled = connector_factory is not None or bool(
+            settings.clickup_api_token and settings.clickup_team_id
+        )
 
     async def execute(self, run_id: uuid.UUID) -> SyncStatus:
         """Roda os passos do ClickUp (1 a 3) e, se configurado, os do GitLab, e
         grava o status final do run. Devolve o status."""
         state = _RunState()
         try:
-            try:
-                await self._run_with_connector(run_id, state)
-            except Exception as exc:  # erro inesperado fora dos passos (por exemplo, no banco)
-                state.fail("sync", exc)
+            if self._clickup_enabled:
+                try:
+                    await self._run_with_connector(run_id, state)
+                except Exception as exc:  # erro inesperado fora dos passos (por exemplo, no banco)
+                    state.fail("sync", exc)
+            else:
+                state.clickup_skipped = "não configurado"
+                logger.info("%s não configurado: passos pulados", DEFAULT_SOURCE)
             # Uma falha do ClickUp não impede o GitLab, e vice-versa.
             await self._run_code_source(run_id, state)
         except asyncio.CancelledError:
@@ -328,8 +361,9 @@ class SyncService:
         await self._finish(run_id, status, state.stats(final=True), error)
         tasks = state.counters["tasks"]
         logger.info(
-            "run %s terminou: %s (tarefas: %d criadas, %d atualizadas, %d removidas)",
+            "run %s terminou: %s (tarefas: %d criadas, %d atualizadas, %d removidas)%s",
             run_id, status.value, tasks.created, tasks.updated, tasks.deleted,
+            f"; erro: {error}" if error else "",
         )
         if state.code is not None:
             code = state.code
@@ -772,7 +806,15 @@ class SyncService:
                         listing_stats["deletions_skipped"] = True
                         listing_stats["deletions_skipped_reason"] = skip_reason
 
-                # O watermark só avança com a listagem completa; nunca anda para trás.
+                # O watermark só avança com a listagem completa; nunca anda para
+                # trás nem passa do início da listagem (data no futuro na origem).
+                if max_updated is not None and max_updated > listing_started_at:
+                    listing_stats["future_dated_merge_requests"] = True
+                    logger.warning(
+                        "%s: MRs do repositório %s com data no futuro; watermark limitado "
+                        "ao início da listagem", source, repo.external_id,
+                    )
+                    max_updated = listing_started_at
                 new_watermark = watermark
                 if report.complete and max_updated is not None:
                     new_watermark = max(watermark, max_updated) if watermark else max_updated
@@ -822,6 +864,9 @@ class SyncService:
         else:
             since = watermark - INCREMENTAL_OVERLAP
 
+        # Teto do watermark: um `committed_at` no futuro (relógio errado do
+        # committer) levaria o watermark adiante e congelaria o repositório.
+        listing_started_at = datetime.now(UTC)
         listing = connector.iter_commits(repo.external_id, since=since)
         counter = code.counters["commits"]
         received = 0
@@ -863,6 +908,13 @@ class SyncService:
                 code.note_unavailable("commits", repo.external_id, report)
                 listing_stats["unavailable"] = True
             else:
+                if max_committed is not None and max_committed > listing_started_at:
+                    listing_stats["future_dated_commits"] = True
+                    logger.warning(
+                        "%s: commits do repositório %s com data no futuro; watermark limitado "
+                        "ao início da listagem", source, repo.external_id,
+                    )
+                    max_committed = listing_started_at
                 new_watermark = watermark
                 if report.complete and max_committed is not None:
                     new_watermark = max(watermark, max_committed) if watermark else max_committed
