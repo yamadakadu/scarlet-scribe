@@ -159,3 +159,180 @@ button:disabled {
   text-decoration: underline;
   font-size: inherit;
 }
+
+h2 {
+  color: var(--text-h);
+  font-size: 1.1rem;
+  margin: 1.25rem 0 0.5rem;
+}
+
+a {
+  color: var(--accent);
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.error {
+  color: var(--error);
+}
+
+.tag {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--text-muted);
+  vertical-align: middle;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.filters label.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+  padding-bottom: 0.4rem;
+}
+
+input,
+select {
+  font: inherit;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-h);
+}
+
+input[aria-invalid='true'] {
+  border-color: var(--error);
+}
+
+.count {
+  color: var(--text-muted);
+  margin: 0 0 0.5rem;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+th {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.plain-list,
+.tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.plain-list li {
+  padding: 0.3rem 0;
+}
+
+.tree .tree {
+  margin-left: 1.25rem;
+  border-left: 1px solid var(--border);
+  padding-left: 0.5rem;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0;
+}
+
+.tree-toggle {
+  width: 1.5rem;
+  text-align: center;
+  text-decoration: none;
+  color: var(--text-muted);
+}
+
+.fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: 0.75rem 1.5rem;
+  margin: 1rem 0;
+}
+
+.fields dt {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.fields dd {
+  margin: 0;
+}
+
+.sync {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.sync progress {
+  width: 5rem;
+}
+
+.sync-info {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  max-width: 24rem;
+}
+
+.sync-info--ok {
+  color: var(--ok);
+}
+
+.sync-info--error {
+  color: var(--error);
+}
+
+.sync-info--busy {
+  color: var(--warn);
+}

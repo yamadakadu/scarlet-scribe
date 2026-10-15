@@ -3,6 +3,7 @@ import { Layout } from './components/Layout.tsx'
 import { MilestonesPage } from './pages/MilestonesPage.tsx'
 import { NotFoundPage } from './pages/NotFoundPage.tsx'
 import { ProjectsPage } from './pages/ProjectsPage.tsx'
+import { TaskDetailPage } from './pages/TaskDetailPage.tsx'
 import { TasksPage } from './pages/TasksPage.tsx'
 
 export const router = createBrowserRouter([
@@ -12,6 +13,8 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate to="/tarefas" replace /> },
       { path: 'tarefas', element: <TasksPage /> },
+      { path: 'tarefas/:id', element: <TaskDetailPage /> },
+      { path: 'arquivadas', element: <TasksPage archived /> },
       { path: 'marcos', element: <MilestonesPage /> },
       { path: 'projetos', element: <ProjectsPage /> },
       { path: '*', element: <NotFoundPage /> },

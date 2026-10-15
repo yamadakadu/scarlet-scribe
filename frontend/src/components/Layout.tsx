@@ -1,8 +1,10 @@
 import { NavLink, Outlet } from 'react-router'
 import { ApiStatus } from './ApiStatus.tsx'
+import { SyncButton } from './SyncButton.tsx'
 
 const NAV_ITEMS = [
   { to: '/tarefas', label: 'Tarefas' },
+  { to: '/arquivadas', label: 'Arquivadas' },
   { to: '/marcos', label: 'Marcos' },
   { to: '/projetos', label: 'Projetos' },
 ]
@@ -21,10 +23,7 @@ export function Layout() {
         </nav>
         <div className="app-header-actions">
           <ApiStatus />
-          {/* O botão ganha a lógica (POST /sync e acompanhamento do run) na F1-09b. */}
-          <button type="button" disabled title="Disponível em breve">
-            Sincronizar agora
-          </button>
+          <SyncButton />
         </div>
       </header>
       <main className="app-main">
