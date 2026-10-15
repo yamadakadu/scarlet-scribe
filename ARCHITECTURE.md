@@ -15,7 +15,7 @@ O projeto é construído em duas fases. **A autenticação é uma fase à parte 
 | Fase | Escopo | Fora do escopo |
 |---|---|---|
 | **Fase 1: estrutura inicial** | Monorepo e Docker Compose; cliente do ClickUp com o token do bot; modelo canônico e banco; sync de estrutura, tarefas e marcos (passos 1 a 3); worker e fila; API de leitura (`/projects`, `/people`, `/tasks`, `/milestones`, `/sync`); front com listagens e botão de sincronizar | Login, sessões, OAuth e **registro de horas**. As horas dependem do token de cada pessoa, que só existe depois da autenticação |
-| **Fase M: multi-integração** (começa junto com a F1-11, antes da Fase 2) | Barra lateral com os apps conectados; GitLab self-hosted como segunda fonte (repositórios, merge requests e commits), só leitura, com token de bot; rotas `/sources`, `/repositories`, `/merge-requests` e `/commits` | Cruzar dados entre apps; escrita nas ferramentas; login; Discord e outros apps |
+| **Fase M: multi-integração** (começa junto com a F1-11, antes da Fase 2) | Barra lateral com os apps conectados; GitLab (gitlab.com ou self-hosted, conforme o disponível) como segunda fonte (repositórios, merge requests e commits), só leitura, com token de bot; rotas `/sources`, `/repositories`, `/merge-requests` e `/commits` | Cruzar dados entre apps; escrita nas ferramentas; login; Discord e outros apps |
 | **Fase 2: autenticação e horas (à parte)** | Login LDAP e sessões; proteção das rotas; conexão OAuth com o ClickUp; tabelas `app_users`, `sessions`, `clickup_connections` e `time_entries`; passo 4 do sync (horas por pessoa); rotas `/auth/*`, `/integrations/clickup/*` e `/time-entries*`; telas de login, "Conectar ClickUp" e "Minhas horas" | Verificação de identidade LDAP × ClickUp (etapa futura) |
 
 **Na Fase 1 a API não tem login.** Todas as rotas ficam abertas, então a aplicação só deve rodar localmente ou em rede interna até a Fase 2. O código da Fase 1 não deve antecipar a Fase 2: não cria tabelas, rotas ou dependências de autenticação. A Fase 2 entra depois, por cima da estrutura pronta: um `Depends(current_user)` nos routers, as tabelas novas numa migration própria e um passo novo no `SyncService`.
@@ -507,10 +507,12 @@ Decisões do Carlos (2026-10-15). A plataforma passa a reunir várias ferramenta
 - As rotas ganham o prefixo do app: `/clickup/tarefas`, `/clickup/tarefas/:id`, `/clickup/arquivadas`, `/clickup/marcos` e `/clickup/projetos`; depois, `/gitlab/merge-requests`, `/gitlab/commits` e `/gitlab/repositorios`. As rotas antigas redirecionam para as novas, e `/` vai para `/clickup/tarefas`.
 - Em telas estreitas, a barra lateral vira uma faixa de ícones no topo.
 
-### GitLab (self-hosted)
+### GitLab (gitlab.com ou self-hosted)
 
-- **Autenticação:** token de um usuário bot com papel **Reporter** nos grupos e projetos sincronizados, só com o escopo **`read_api`**, enviado no header `PRIVATE-TOKEN`. Ao contrário do ClickUp, o GitLab tem escopos: o `read_api` garante a leitura pelo próprio token, além da regra de só usar GET no código.
-- **Base:** `{GITLAB_URL}/api/v4`. O cliente aceita um bundle de CA próprio para certificados internos.
+**Decisão do Carlos (2026-10-15):** a instância é a que estiver disponível, o gitlab.com ou o self-hosted da empresa. As duas usam a mesma API (`{GITLAB_URL}/api/v4`), com o mesmo token e os mesmos endpoints, e o código não as distingue. Começar no gitlab.com e passar depois para o self-hosted segue "Troca de instância", abaixo.
+
+- **Autenticação:** token de um usuário bot, só com o escopo **`read_api`**, enviado no header `PRIVATE-TOKEN`. No gitlab.com, uma conta bot gratuita (ou a do Carlos, só durante o desenvolvimento) com um *personal access token*; os group e project access tokens podem exigir plano pago lá **(a confirmar)**. No self-hosted, um bot com papel **Reporter** nos grupos e projetos sincronizados, com um personal, group ou project access token. Ao contrário do ClickUp, o GitLab tem escopos: o `read_api` garante a leitura pelo próprio token, além da regra de só usar GET no código.
+- **Base:** `{GITLAB_URL}/api/v4`, com `GITLAB_URL` igual a `https://gitlab.com` ou à URL do self-hosted. O cliente aceita um bundle de CA próprio para certificados internos (só no self-hosted).
 - **Endpoints previstos (a confirmar no spike, FM-03):**
 
   | Dado | Endpoint |
@@ -524,6 +526,15 @@ Decisões do Carlos (2026-10-15). A plataforma passa a reunir várias ferramenta
 - **Paginação (a confirmar):** `per_page=100`, seguindo `X-Next-Page` ou o header `Link`; keyset onde houver suporte. `X-Total` some acima de 10 mil itens, então o cliente não depende dele.
 - **Rate limit (a confirmar):** headers `RateLimit-*` e 429 com `Retry-After`; o limite depende da configuração da instância. O cliente segue o mesmo padrão do ClickUp: limite preventivo configurável, ajustado só para baixo pelos headers, e retries com backoff.
 - **Variáveis (FM-05):** `GITLAB_URL`, `GITLAB_API_TOKEN`, `GITLAB_GROUP_IDS`, `GITLAB_PROJECT_IDS`, `GITLAB_CA_BUNDLE` (opcional) e `GITLAB_RATE_LIMIT_PER_MINUTE`. Cada fonte é opcional: sem as variáveis do GitLab, o sync e a API seguem só com o ClickUp.
+- **Compatibilidade entre instâncias:** o gitlab.com roda sempre a versão mais nova, e o self-hosted pode ser mais antigo. Por isso:
+  - o conector segue o caminho mais compatível: paginação por offset com `X-Next-Page`/`Link`, sem depender de keyset nem de `X-Total`. Recurso que dependa de versão só entra com checagem da versão (`GET /version`);
+  - o rate limit vem dos headers `RateLimit-*` e do 429, porque ele é fixo no gitlab.com e configurável no self-hosted. O único valor no código é o limite preventivo `GITLAB_RATE_LIMIT_PER_MINUTE`;
+  - `GITLAB_CA_BUNDLE` é opcional e ignorado quando vazio.
+- **Troca de instância (FM-11):** os ids do gitlab.com não têm relação com os do self-hosted, e as duas instâncias não convivem no mesmo banco (a instância não entra no `external_id`). A troca é:
+  1. trocar `GITLAB_URL`, `GITLAB_API_TOKEN` e os ids de grupos e projetos no `.env`;
+  2. refazer o spike (FM-03) contra a instância nova e corrigir este documento se algo divergir (versão, paginação, rate limit);
+  3. apagar os dados do GitLab no banco (`commits`, `merge_requests`, `repositories`, as `people` com `source = 'gitlab'` e os `sync_state` com `resource` começando em `gitlab:`) com um script dedicado em `backend/scripts/`, que só toca nessas linhas;
+  4. rodar um sync e conferir no navegador.
 - **Código:** `connectors/gitlab/` com `client.py`, `schemas.py`, `mapper.py` e `connector.py`, como no ClickUp. `base.py` e `factory.py` são generalizados só no necessário para mais de uma fonte (por exemplo, `create_connectors(settings)` devolvendo os conectores configurados).
 
 ### Banco (migration `0002`, a detalhar depois do spike)

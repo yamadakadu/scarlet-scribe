@@ -155,7 +155,7 @@ A plataforma passa a reunir várias ferramentas, e o GitLab é a segunda. O dese
 Decisões do Carlos (2026-10-15):
 - **por enquanto, os apps só ficam visíveis no painel**, e o usuário alterna entre eles por uma barra lateral. Nada de cruzar dados nem de escrever nas ferramentas;
 - a barra lateral tem **só os aplicativos, com um ícone para cada um**, sem os grupos de telas de cada app;
-- o GitLab é **self-hosted**, e o primeiro recorte é **merge requests e commits**;
+- o GitLab é **o gitlab.com ou o self-hosted da empresa, conforme o que for disponibilizado**; o código serve para os dois, e começar no gitlab.com e passar depois para o self-hosted é a FM-11. O primeiro recorte é **merge requests e commits**;
 - a Fase M **começa junto com a F1-11**: a barra lateral entra já, e o GitLab vem antes da Fase 2;
 - no futuro os apps vão se integrar, com **escrita em pontos específicos**. Isso muda a regra de somente leitura e é decidido ponto a ponto, numa etapa própria.
 
@@ -167,7 +167,9 @@ Decisões do Carlos (2026-10-15):
 - [x] Documentação atualizada: este plano, `ARCHITECTURE.md` e `CLAUDE.md`
 - [ ] Hooks estendidos ao GitLab: só GET em `connectors/gitlab/`, sem escrita no host do GitLab, e `selfcheck.py` passando (Maestro, antes da FM-05)
 - [ ] FM-01: barra lateral de apps (Vitrine)
-- [ ] FM-02: pré-requisitos do GitLab (Carlos)
+- [x] Decisão: usar o gitlab.com ou o self-hosted, conforme o que for disponibilizado (2026-10-15)
+- [ ] FM-01 integrada na `main` (feita e aprovada na branch `vitrine/sidebar-apps`; aguarda a confirmação do Carlos)
+- [ ] FM-02: pré-requisitos do GitLab, na instância disponível (Carlos)
 - [ ] FM-03: spike do GitLab (Batedor)
 - [ ] FM-04: modelo e tabelas do GitLab (Arquivista)
 - [ ] FM-05: conector GitLab e variáveis de ambiente (Conector e Alicerce)
@@ -176,21 +178,23 @@ Decisões do Carlos (2026-10-15):
 - [ ] FM-08: telas do GitLab e a sidebar lendo `/sources` (Vitrine)
 - [ ] FM-09: revisão de cada entrega (Revisor)
 - [ ] FM-10: verificação ponta a ponta (Maestro e Carlos)
+- [ ] FM-11: troca para o self-hosted, se a FM-02 começar no gitlab.com (Maestro e Carlos)
 
 ### Tarefas
 
 | ID | Tarefa | Agente | Depende de | Onda | Entregável e critério de pronto |
 |---|---|---|---|---|---|
 | FM-01 | Barra lateral de apps: registro estático em `frontend/src/apps.ts` (`id`, `label`, `icon`, `basePath`, `nav`, `enabled`); `AppSidebar` com um botão de ícone por app (nome em `title`/`aria-label`), destaque no ativo, GitLab desabilitado com "em breve"; o header mostra as abas do app ativo; rotas com prefixo `/clickup/...` e redirecionamento das antigas; ícones SVG inline (paths do Simple Icons, CC0) sem dependência nova; em tela estreita, a sidebar vira uma faixa no topo | Vitrine | F1-09b | M0 | `npm run typecheck`, `npm run lint` e `npm run build` passam; no `npm run dev`, a sidebar mostra o ClickUp ativo e o GitLab desabilitado; as abas funcionam em `/clickup/...`; `/tarefas` redireciona; sem scroll horizontal na largura de celular |
-| FM-02 | Fornecer a URL do GitLab, um usuário bot com papel Reporter, um token só com `read_api` no `.env`, os grupos ou projetos a sincronizar e se o certificado TLS é interno | Carlos | — | M0 | `.env` preenchido (fora do git). O Maestro confirma que as variáveis existem, sem ler os valores |
+| FM-02 | Fornecer, na instância disponível (gitlab.com ou self-hosted), o `GITLAB_URL`, um usuário bot e um token só com `read_api` no `.env` (no gitlab.com, um personal access token; no self-hosted, o bot com papel Reporter), os grupos ou projetos a sincronizar e, só no self-hosted, se o certificado TLS é interno | Carlos | — | M0 | `.env` preenchido (fora do git). O Maestro confirma que as variáveis existem, sem ler os valores |
 | FM-03 | Spike do GitLab (`backend/scripts/gitlab_spike.py`, só GET): autenticação e escopo do token, projetos por grupo, MRs com `updated_after`, commits por projeto, paginação e headers de rate limit | Batedor | FM-02 | M1 | Relatório com uma resposta por item e a evidência, sem dados sensíveis. O Maestro atualiza o `ARCHITECTURE.md` |
 | FM-04 | Modelos canônicos `Repository`, `MergeRequest` e `Commit` e a migration `0002` com `repositories`, `merge_requests` e `commits` | Arquivista | FM-03 | M2 | `alembic upgrade head` e `alembic downgrade -1` rodam limpos; `\d` mostra os índices únicos |
-| FM-05 | `connectors/gitlab/` (cliente só GET, schemas, mapper e conector) e a generalização mínima de `base.py`/`factory.py` para mais de uma fonte. Variáveis `GITLAB_*` em `config.py` e `.env.example` (Alicerce) | Conector e Alicerce | FM-03, FM-04 | M3 | Um script imprime repositórios, MRs e commits no formato canônico; o cliente não tem método de escrita; sem as variáveis do GitLab, nada muda para o ClickUp |
+| FM-05 | `connectors/gitlab/` (cliente só GET, schemas, mapper e conector) e a generalização mínima de `base.py`/`factory.py` para mais de uma fonte. Variáveis `GITLAB_*` em `config.py` e `.env.example` (Alicerce) | Conector e Alicerce | FM-03, FM-04 | M3 | Um script imprime repositórios, MRs e commits no formato canônico; o cliente não tem método de escrita; sem as variáveis do GitLab, nada muda para o ClickUp; o código não distingue gitlab.com de self-hosted e segue o caminho mais compatível com versões antigas (ver `ARCHITECTURE.md` › "Compatibilidade entre instâncias") |
 | FM-06 | Passos do GitLab no `SyncService`: repositórios, MRs incrementais e commits por repositório; uma falha numa fonte deixa o run `partial` | Sincronista | FM-05 | M4 | Um sync termina `succeeded` com dados do GitLab no banco; um segundo sync não duplica; sem GitLab configurado, o sync do ClickUp segue igual |
 | FM-07 | Rotas `GET /sources`, `/repositories`, `/merge-requests` e `/commits` | Portal | FM-04 | M3 | `curl` em cada rota retorna o formato documentado; o OpenAPI é gerado |
 | FM-08 | Sidebar lendo `/sources`; telas Merge Requests, Commits e Repositórios em `/gitlab/...`; cliente TS regenerado | Vitrine | FM-01, FM-07 | M5 | Com o backend rodando, o GitLab fica habilitado na sidebar e mostra os dados sincronizados |
 | FM-09 | Revisão de cada entrega: FM-01, FM-03 a FM-08 | Revisor | cada entrega | contínua | Parecer "aprovado" ou uma lista de bloqueios |
 | FM-10 | Verificação ponta a ponta e atualização deste plano e do `CLAUDE.md` | Maestro e Carlos | todas | M6 | O Carlos valida no navegador a alternância entre ClickUp e GitLab |
+| FM-11 | Troca de instância, só se a FM-02 começar no gitlab.com: trocar o `.env`, refazer o spike contra o self-hosted, apagar os dados do GitLab com um script dedicado (`backend/scripts/`, do Conector) e sincronizar de novo. Procedimento em `ARCHITECTURE.md` › "Troca de instância" | Maestro e Carlos (Conector no script) | FM-10 e o self-hosted disponível | — | Sync `succeeded` contra o self-hosted, sem dados do gitlab.com no banco, e o Carlos confere no navegador |
 
 A FM-01 roda em paralelo à F1-11 e não depende do GitLab. A conferência visual da barra lateral entra na própria F1-11.
 
@@ -240,3 +244,4 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 | FM-08 | pendente | |
 | FM-09 | pendente | |
 | FM-10 | pendente | |
+| FM-11 | pendente | Só se a FM-02 começar no gitlab.com |
