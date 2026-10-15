@@ -230,8 +230,8 @@ class SyncService:
     ) -> bool:
         report = snapshot.report
         complete = report.complete
-        # A estrutura é sempre uma listagem completa (requested_full=True).
-        allows_deletions = _allows_deletions(report, requested_full=True)
+        # A estrutura é sempre `full`: aqui `allows_deletions` equivale a `complete`.
+        allows_deletions = report.allows_deletions
         workspace = snapshot.workspace
 
         async with self._sessionmaker() as session, session.begin():
@@ -358,18 +358,20 @@ class SyncService:
 
             listing_stats: dict[str, Any] = report.to_stats()
             reconciled = False
-            if _listing_is_full(report, requested_full=reconcile):
-                if _allows_deletions(report, requested_full=reconcile) and structure_allows_deletions:
-                    # Vistas: todas as recebidas mais as descartadas por dados inválidos.
+            if reconcile or report.is_full:
+                skip_reason = _task_deletions_blocker(
+                    report, requested_full=reconcile, structure_allows_deletions=structure_allows_deletions
+                )
+                if skip_reason is None:
+                    # Vistas: as tarefas dos lotes (já unidas, sem repetição) mais
+                    # as descartadas por dados inválidos.
                     counter.deleted = await _mark_deleted(
                         session, "tasks", source, seen | report.discarded_ids
                     )
                     reconciled = True
                 else:
                     listing_stats["deletions_skipped"] = True
-                    listing_stats["deletions_skipped_reason"] = (
-                        "listagem de tarefas parcial" if not report.complete else "estrutura parcial"
-                    )
+                    listing_stats["deletions_skipped_reason"] = skip_reason
 
             # O watermark só avança com a listagem completa; nunca anda para trás.
             new_watermark = watermark
@@ -416,30 +418,28 @@ class SyncService:
             )
 
 
-# --- Ponto de troca: modo da listagem e permissão de exclusão ------------------
-#
-# A rodada nova do conector acrescenta ao `ListingReport` os campos `mode`
-# (`ListingMode.FULL` ou `INCREMENTAL`) e `allows_deletions` (`complete and
-# mode == full`). Enquanto ela não chega à `main`, o modo é o que o serviço pediu
-# (`updated_since=None` = completa). Depois do merge, troque o corpo das duas
-# funções abaixo pelos campos (`report.allows_deletions` e
-# `report.mode == ListingMode.FULL`) e apague o fallback.
+def _task_deletions_blocker(
+    report: ListingReport, *, requested_full: bool, structure_allows_deletions: bool
+) -> str | None:
+    """Motivo para **não** marcar exclusões de tarefas, ou None se pode marcar.
 
-
-def _listing_is_full(report: ListingReport, *, requested_full: bool) -> bool:
-    """Se a listagem foi completa (reconciliação) ou incremental."""
-    mode = getattr(report, "mode", None)
-    if mode is not None:
-        return getattr(mode, "value", mode) == "full"
-    return requested_full
-
-
-def _allows_deletions(report: ListingReport, *, requested_full: bool) -> bool:
-    """Se a listagem permite marcar exclusões: completa e no modo completo."""
-    allows = getattr(report, "allows_deletions", None)
-    if allows is not None:
-        return bool(allows)
-    return report.complete and requested_full
+    Regra: `allows_deletions` da listagem de tarefas (completa e `full`) e da
+    estrutura do mesmo run. Por segurança, o modo do report também precisa ser o
+    que o serviço pediu: um report `full` numa busca pedida como incremental
+    seria um erro do conector, e marcar exclusões ali apagaria tarefas que só
+    não mudaram.
+    """
+    if report.is_full != requested_full:
+        logger.warning(
+            "tarefas: modo do report (%s) diferente do pedido; exclusões não marcadas",
+            report.mode.value,
+        )
+        return "modo da listagem diferente do pedido"
+    if not report.allows_deletions:
+        return "listagem de tarefas parcial"
+    if not structure_allows_deletions:
+        return "estrutura parcial"
+    return None
 
 
 # --- SQL ----------------------------------------------------------------------
