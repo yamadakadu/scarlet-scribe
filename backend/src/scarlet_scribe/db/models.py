@@ -1,4 +1,4 @@
-"""Tabelas da Fase 1 (SQLAlchemy 2, estilo `Mapped`).
+"""Tabelas da Fase 1 e da Fase M, o GitLab (SQLAlchemy 2, estilo `Mapped`).
 
 As tabelas sincronizadas herdam `SyncedMixin` (ver `db/base.py`). As da
 Fase 2 entram numa migration própria e não são declaradas aqui.

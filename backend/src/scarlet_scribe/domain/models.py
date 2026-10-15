@@ -9,7 +9,7 @@ banco. Todos os instantes são `datetime` com fuso (UTC); durações em ms.
 from enum import StrEnum
 from typing import Any
 
-from pydantic import AwareDatetime, BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field, model_validator
 
 
 class ContainerKind(StrEnum):
@@ -21,7 +21,7 @@ class ContainerKind(StrEnum):
 
 
 class MergeRequestState(StrEnum):
-    """Estado de um merge request, com os valores da API do GitLab."""
+    """Estados canônicos de um merge request; hoje iguais aos do GitLab."""
 
     OPENED = "opened"
     CLOSED = "closed"
@@ -143,6 +143,16 @@ class MergeRequest(SourceRecord):
     source_updated_at: AwareDatetime | None = Field(
         default=None, description="Última alteração na origem; base do watermark do sync"
     )
+
+    @model_validator(mode="after")
+    def _author_ids_agree(self) -> "MergeRequest":
+        """Com `author`, `external_author_id` é o `external_id` dele (preenchido se vazio)."""
+        if self.author is not None:
+            if self.external_author_id is None:
+                self.external_author_id = self.author.external_id
+            elif self.external_author_id != self.author.external_id:
+                raise ValueError("external_author_id diverge de author.external_id")
+        return self
 
 
 class Commit(SourceRecord):
