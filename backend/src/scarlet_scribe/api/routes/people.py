@@ -22,8 +22,12 @@ async def list_people(
         str | None,
         Query(description="Busca no nome de usuário ou no e-mail, sem diferenciar maiúsculas"),
     ] = None,
+    source: Annotated[
+        str,
+        Query(description="Fonte das pessoas: 'clickup' (padrão) ou 'gitlab'"),
+    ] = "clickup",
 ) -> PersonPage:
-    stmt = select(PersonRow).where(PersonRow.deleted_at.is_(None))
+    stmt = select(PersonRow).where(PersonRow.deleted_at.is_(None), PersonRow.source == source)
     if q:
         pattern = like_pattern(q)
         stmt = stmt.where(
