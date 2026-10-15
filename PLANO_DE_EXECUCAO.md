@@ -166,9 +166,8 @@ Decisões do Carlos (2026-10-15):
 - [x] Base multi-fonte já existente: protocolo `Connector`, `create_connector`, chave `(source, external_id)` e `sync_state` por recurso
 - [x] Documentação atualizada: este plano, `ARCHITECTURE.md` e `CLAUDE.md`
 - [ ] Hooks estendidos ao GitLab: só GET em `connectors/gitlab/`, sem escrita no host do GitLab, e `selfcheck.py` passando (Maestro, antes da FM-05)
-- [ ] FM-01: barra lateral de apps (Vitrine)
+- [x] FM-01: barra lateral de apps (Vitrine), integrada em a237fc1
 - [x] Decisão: usar o gitlab.com ou o self-hosted, conforme o que for disponibilizado (2026-10-15)
-- [ ] FM-01 integrada na `main` (feita e aprovada na branch `vitrine/sidebar-apps`; aguarda a confirmação do Carlos)
 - [ ] FM-02: pré-requisitos do GitLab, na instância disponível (Carlos)
 - [ ] FM-03: spike do GitLab (Batedor)
 - [ ] FM-04: modelo e tabelas do GitLab (Arquivista)
@@ -234,7 +233,7 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 | F1-09b | integrado | Branch `vitrine/telas-fase1` (5c77ab6, 4f90196), integrada em 67f9854. Sugestões do Revisor aguardando o Carlos |
 | F1-12 | integrado | Branch `alicerce/frontend-compose` (55d6e05). Pendente: ver `api` e `worker` subindo, o que depende da F1-07 e da F1-08 (fica para a F1-11) |
 | F1-11 | pendente | Inclui a conferência visual da FM-01 |
-| FM-01 | pendente | Pode começar já |
+| FM-01 | integrado | Branch `vitrine/sidebar-apps` (ddbc799, c19dc48, 1d67ee2), integrada em a237fc1. Aprovada pelo Revisor após 2 bloqueios corrigidos; os ajustes do Carlos (link do GitHub no header, controles menores, barra de sync fluida) foram conferidos pelo Maestro no diff. A conferência visual final fica para a F1-11 |
 | FM-02 | pendente | Aguardando o Carlos |
 | FM-03 | pendente | |
 | FM-04 | pendente | |
