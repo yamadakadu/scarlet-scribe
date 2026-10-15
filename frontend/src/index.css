@@ -467,3 +467,27 @@ th {
     gap: 0.5rem 1rem;
   }
 }
+
+.badge {
+  display: inline-block;
+  padding: 0 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.badge-opened {
+  color: var(--ok);
+  border-color: currentColor;
+}
+
+.badge-merged {
+  color: #7c3aed;
+  border-color: currentColor;
+}
+
+.badge-closed {
+  color: var(--error);
+  border-color: currentColor;
+}

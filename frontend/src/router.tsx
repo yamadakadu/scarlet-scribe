@@ -1,7 +1,10 @@
 import { createBrowserRouter, Navigate } from 'react-router'
-import { CLICKUP, CLICKUP_ROUTES, clickupPaths } from './apps.ts'
+import { CLICKUP, CLICKUP_ROUTES, clickupPaths, GITLAB, GITLAB_ROUTES, gitlabPaths } from './apps.ts'
 import { LegacyRedirect } from './components/LegacyRedirect.tsx'
 import { Layout } from './components/Layout.tsx'
+import { CommitsPage } from './pages/CommitsPage.tsx'
+import { MergeRequestsPage } from './pages/MergeRequestsPage.tsx'
+import { RepositoriesPage } from './pages/RepositoriesPage.tsx'
 import { MilestonesPage } from './pages/MilestonesPage.tsx'
 import { NotFoundPage } from './pages/NotFoundPage.tsx'
 import { ProjectsPage } from './pages/ProjectsPage.tsx'
@@ -23,6 +26,15 @@ export const router = createBrowserRouter([
           { path: CLICKUP_ROUTES.archived, element: <TasksPage archived /> },
           { path: CLICKUP_ROUTES.milestones, element: <MilestonesPage /> },
           { path: CLICKUP_ROUTES.projects, element: <ProjectsPage /> },
+        ],
+      },
+      {
+        path: GITLAB.basePath.slice(1),
+        children: [
+          { index: true, element: <Navigate to={gitlabPaths.mergeRequests} replace /> },
+          { path: GITLAB_ROUTES.mergeRequests, element: <MergeRequestsPage /> },
+          { path: GITLAB_ROUTES.commits, element: <CommitsPage /> },
+          { path: GITLAB_ROUTES.repositories, element: <RepositoriesPage /> },
         ],
       },
       { path: 'tarefas', element: <LegacyRedirect to={() => clickupPaths.tasks} /> },

@@ -24,6 +24,12 @@ export const CLICKUP_ROUTES = {
   projects: 'projetos',
 } as const
 
+export const GITLAB_ROUTES = {
+  mergeRequests: 'merge-requests',
+  commits: 'commits',
+  repositories: 'repositorios',
+} as const
+
 export const APPS: AppDef[] = [
   {
     id: 'clickup',
@@ -45,7 +51,11 @@ export const APPS: AppDef[] = [
     basePath: '/gitlab',
     enabled: false,
     hint: 'em breve',
-    nav: [],
+    nav: [
+      { path: GITLAB_ROUTES.mergeRequests, label: 'Merge Requests' },
+      { path: GITLAB_ROUTES.commits, label: 'Commits' },
+      { path: GITLAB_ROUTES.repositories, label: 'Repositórios' },
+    ],
   },
 ]
 
@@ -62,6 +72,17 @@ export const clickupPaths = {
   milestones: `${CLICKUP.basePath}/${CLICKUP_ROUTES.milestones}`,
   projects: `${CLICKUP.basePath}/${CLICKUP_ROUTES.projects}`,
   tasksOfProject: (projectId: string) => `${CLICKUP.basePath}/${CLICKUP_ROUTES.tasks}?projeto=${projectId}`,
+}
+
+export const GITLAB = APPS[1]!
+
+/** Caminhos do GitLab derivados do basePath, para os links internos. */
+export const gitlabPaths = {
+  mergeRequests: `${GITLAB.basePath}/${GITLAB_ROUTES.mergeRequests}`,
+  commits: `${GITLAB.basePath}/${GITLAB_ROUTES.commits}`,
+  repositories: `${GITLAB.basePath}/${GITLAB_ROUTES.repositories}`,
+  mergeRequestsOfRepository: (repositoryId: string) =>
+    `${GITLAB.basePath}/${GITLAB_ROUTES.mergeRequests}?repositorio=${repositoryId}`,
 }
 
 export function appForPath(pathname: string): AppDef | undefined {

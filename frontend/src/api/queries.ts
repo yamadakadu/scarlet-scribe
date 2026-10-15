@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { endOfLocalDay, startOfLocalDay } from '../lib/dates.ts'
-import { api, unwrap, type TaskOrder } from './client.ts'
+import { api, unwrap, type MergeRequestState, type TaskOrder } from './client.ts'
 
 export interface TaskFilters {
   q?: string
@@ -82,5 +82,83 @@ export function usePeople() {
   return useQuery({
     queryKey: ['people'],
     queryFn: async () => unwrap(await api.GET('/api/v1/people', { params: { query: { limit: 200 } } })),
+  })
+}
+
+export function useSources() {
+  return useQuery({
+    queryKey: ['sources'],
+    staleTime: 30_000,
+    queryFn: async () => unwrap(await api.GET('/api/v1/sources')),
+  })
+}
+
+export function useRepositories(archived: boolean, limit = 200, offset = 0) {
+  return useQuery({
+    queryKey: ['repositories', archived, limit, offset],
+    placeholderData: keepPreviousData,
+    queryFn: async () =>
+      unwrap(await api.GET('/api/v1/repositories', { params: { query: { archived, limit, offset } } })),
+  })
+}
+
+export interface MergeRequestFilters {
+  repositoryId?: string
+  state: MergeRequestState
+  q?: string
+  limit: number
+  offset: number
+}
+
+export function useMergeRequests(f: MergeRequestFilters) {
+  return useQuery({
+    queryKey: ['merge-requests', f],
+    placeholderData: keepPreviousData,
+    queryFn: async () =>
+      unwrap(
+        await api.GET('/api/v1/merge-requests', {
+          params: {
+            query: {
+              repository_id: f.repositoryId,
+              state: [f.state],
+              q: f.q || undefined,
+              limit: f.limit,
+              offset: f.offset,
+            },
+          },
+        }),
+      ),
+  })
+}
+
+export interface CommitFilters {
+  repositoryId?: string
+  /** Dias locais, AAAA-MM-DD. */
+  from?: string
+  to?: string
+  q?: string
+  limit: number
+  offset: number
+}
+
+export function useCommits(f: CommitFilters) {
+  return useQuery({
+    queryKey: ['commits', f],
+    placeholderData: keepPreviousData,
+    queryFn: async () =>
+      unwrap(
+        await api.GET('/api/v1/commits', {
+          params: {
+            query: {
+              repository_id: f.repositoryId,
+              from: f.from ? startOfLocalDay(f.from) : undefined,
+              to: f.to ? endOfLocalDay(f.to) : undefined,
+              q: f.q || undefined,
+              limit: f.limit,
+              offset: f.offset,
+            },
+          },
+        }),
+      ),
   })
 }
