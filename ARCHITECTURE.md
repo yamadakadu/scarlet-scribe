@@ -503,8 +503,17 @@ Decisões do Carlos (2026-10-15). A plataforma passa a reunir várias ferramenta
 
 - Uma **barra lateral** à esquerda lista só os aplicativos, cada um com o seu ícone (SVG inline, paths do Simple Icons, licença CC0), sem os grupos de telas de cada app. O nome do app vai em `title` e `aria-label`.
 - O app ativo fica destacado. As abas dele (no ClickUp: Tarefas, Arquivadas, Marcos e Projetos) ficam no header, ao lado de `ApiStatus` e `SyncButton`.
-- Um registro estático em `frontend/src/apps.ts` define, para cada app, `id`, `label`, `icon`, `basePath`, `nav` e `enabled`. Até o backend do GitLab existir, ele aparece desabilitado, com "em breve". Depois da FM-07, o `enabled` vem de `GET /sources`.
-- As rotas ganham o prefixo do app: `/clickup/tarefas`, `/clickup/tarefas/:id`, `/clickup/arquivadas`, `/clickup/marcos` e `/clickup/projetos`; depois, `/gitlab/merge-requests`, `/gitlab/commits` e `/gitlab/repositorios`. As rotas antigas redirecionam para as novas, e `/` vai para `/clickup/tarefas`.
+- Um registro estático em `frontend/src/apps.ts` define, para cada app, `id`, `label`, `icon`, `basePath`, `nav` e `enabled`. **Desde a FM-08, o `enabled` vem de `GET /sources`.** Enquanto `/sources` carrega ou se falhar, vale o `enabled` estático, com o GitLab desabilitado. O `title` do item mostra o último sync ("nunca sincronizado" quando `null`) ou "não configurado".
+- As rotas têm o prefixo do app:
+  - ClickUp: `/clickup/tarefas`, `/clickup/tarefas/:id`, `/clickup/arquivadas`, `/clickup/marcos` e `/clickup/projetos`;
+  - GitLab: `/gitlab/merge-requests`, `/gitlab/commits` e `/gitlab/repositorios`, com `/gitlab` levando a `/gitlab/merge-requests`.
+
+  As rotas antigas redirecionam para as novas, e `/` vai para `/clickup/tarefas`.
+- **Telas do GitLab (FM-08):** os filtros ficam na URL, e mudar um filtro volta à página 1; a paginação é de 50 por página.
+  - **Merge Requests:** filtros de repositório, estado (padrão "Abertos", sem parâmetro na URL, e "Todos" com `estado=todos`, que não manda `state`) e busca.
+  - **Commits:** filtros de repositório, período e busca.
+  - **Repositórios:** a alternância "Mostrar só arquivados" (`archived=true`) e o link "Ver", que abre os MRs do repositório com "Todos".
+- O "Sincronizar agora" continua global (as duas fontes) e, depois de um sync, recarrega também `sources`, `repositories`, `merge-requests` e `commits`.
 - Em telas estreitas, a barra lateral vira uma faixa de ícones no topo.
 
 ### GitLab (gitlab.com ou self-hosted)
@@ -566,10 +575,40 @@ Mesmas convenções das tabelas sincronizadas (`id` UUID, `source = 'gitlab'`, `
 
 ### Sync
 
-O `SyncService` roda, no mesmo run e sob o mesmo advisory lock, os passos de cada fonte configurada. Uma falha numa fonte deixa o run `partial`, e não `failed`. `stats` ganha uma chave por fonte. Os passos do GitLab:
-1. repositórios, sempre completos, com exclusões só se a listagem vier completa;
-2. merge requests incrementais por `updated_after`, com a mesma margem de 5 min do ClickUp;
-3. commits de todos os branches de cada repositório (`all=true`) desde o watermark, com a mesma margem de 5 min; um sha repetido só atualiza o registro.
+O `SyncService` (FM-06) roda no mesmo run, sob o mesmo advisory lock, os passos do ClickUp e depois os do GitLab. O worker não mudou, e o `POST /sync` cobre as duas fontes.
+
+**Fontes e desfecho do run:**
+- uma fonte **não configurada é pulada**: o ClickUp sem token ou team, e o GitLab com `gitlab_enabled` falso. A fonte pulada fica fora do desfecho e aparece em `stats` como `{source, skipped: true, reason: "não configurado"}`. Decisão do Carlos (2026-10-15) para o ClickUp;
+- uma falha numa fonte (inclusive 401) deixa o run `partial` e não desfaz o que a outra gravou. O run termina `failed` só se todas as fontes que rodaram falharem, ou se nenhuma estiver configurada (`error` = "nenhuma fonte configurada");
+- com o GitLab ativo, o `error` de um run `partial` ou `failed` leva o prefixo da fonte (`clickup: ...`, `gitlab: ...`). Com só o ClickUp, o `error` e o `stats` saem como antes.
+
+**`stats`:** os campos do ClickUp continuam no nível de cima. A chave `stats.gitlab` tem:
+- os contadores `repositories`, `merge_requests`, `commits` e `people`;
+- `repository_listing`, mais `merge_request_listings` e `commit_listings` por id do repositório (`to_stats()` com `reconciled`, `watermark_advanced` e, nos commits, `since` e `initial_window`);
+- `skipped_repositories`, `unavailable`, `errors`, `status` e `error`.
+
+Com o ClickUp pulado, `source`, `skipped` e `reason` ficam no nível de cima. O `SyncButton` ainda não mostra os contadores do GitLab.
+
+**Passos do GitLab:**
+1. **Repositórios:** sempre completos; upsert por `(source, external_id)`; `deleted_at` só com `report.allows_deletions`. Os arquivados vêm com `archived=true` e nunca ganham `deleted_at`.
+2. **Merge requests, por repositório não arquivado:**
+   - watermark `gitlab:merge_requests:<id do projeto>` = maior `source_updated_at`, com margem de 5 min;
+   - na primeira vez e a cada `SYNC_FULL_RECONCILE_HOURS`, uma listagem `full` do repositório que marca `deleted_at` nos MRs que não voltaram, só com `allows_deletions` daquela listagem, sem a condição da estrutura que vale para as tarefas. Num repositório sem nenhum MR, o incremental usa `last_full_sync_at − 5 min` como base;
+   - autores em `people` (`source='gitlab'`, upsert com `DO UPDATE`) e `author_id` pelo `external_author_id`.
+3. **Commits, por repositório não arquivado e com `default_branch`:**
+   - todos os branches (`all=true`);
+   - watermark `gitlab:commits:<id do projeto>` = maior `committed_at` (o `since` do GitLab filtra pela data do committer), com margem de 5 min;
+   - na primeira vez, uma janela de 365 dias (a constante `INITIAL_COMMITS_WINDOW`);
+   - commits nunca ganham `deleted_at`, e um sha repetido só atualiza.
+
+**Regras comuns aos passos:**
+- os watermarks só avançam com `report.complete` e **nunca passam do instante em que a listagem começou**: uma data no futuro (relógio errado do committer) não congela o repositório. Esse caso é sinalizado com `future_dated_commits` ou `future_dated_merge_requests` e um `warning`;
+- **"recurso indisponível":** um 403/404 na listagem de MRs ou de commits de um repositório, sem nada recebido, conta em `stats.gitlab.unavailable` e é logado em `warning`. Ele não deixa o run `partial` e não avança o watermark. É o caso de MRs desativados ou de repositório vazio. Qualquer outro erro deixa o run `partial`.
+
+**Limitações conhecidas:**
+- **Commits empurrados tarde se perdem** (decisão do Carlos, 2026-10-15: aceito por ora). O watermark é o maior `committed_at` entre todos os branches. Um commit feito localmente antes do watermark e enviado depois nunca entra; basta outra pessoa ter feito push no meio. Correções possíveis: rebuscar uma janela de alguns dias a cada run ou periodicamente, ou usar os eventos de push (exige spike).
+- Como nas tarefas, cada listagem por repositório roda numa transação aberta durante o HTTP.
+- `stats.gitlab` cresce cerca de 1 KB por repositório e é regravado a cada repositório. Antes da FM-11 (self-hosted com muitos repositórios), guardar o detalhe só dos repositórios com problema.
 
 ### API
 

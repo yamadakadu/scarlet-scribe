@@ -59,6 +59,10 @@ Hooks enforce these rules. The policy is in `.claude/hooks/policy.json`; the hoo
 
 By the user's request, no test suite until an MVP exists. Don't add tests or test tooling unless asked.
 
+## Showing progress to the user
+
+When a review finishes and the work is integrated into `main`, bring the whole stack up with Docker Compose (`docker compose up -d --build` from the repo root) so the user can look at it in the browser. Then tell them the URLs (frontend on `:5173`, API on `:8000`) and what changed on screen. This is the user's standing preference.
+
 ## Commands
 
 Available now (from the repo root; requires Docker Compose 2.24+):

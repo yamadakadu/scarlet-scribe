@@ -174,9 +174,9 @@ Decisões do Carlos (2026-10-15):
 - [x] Decisões pós-spike (Carlos, 2026-10-15): commits de todos os branches (`all=true`); assignees e reviewers dos MRs só no `raw` por enquanto
 - [x] FM-04: modelo e tabelas do GitLab (Arquivista), integrada em 3cc8bad
 - [x] FM-05: conector GitLab e variáveis de ambiente (Conector e Alicerce), integrada em 4f0fee6
-- [ ] FM-06: sync do GitLab (Sincronista)
+- [x] FM-06: sync do GitLab (Sincronista), integrada em a076335
 - [x] FM-07: rotas `/sources`, `/repositories`, `/merge-requests` e `/commits` (Portal), integrada em 4cf2003
-- [ ] FM-08: telas do GitLab e a sidebar lendo `/sources` (Vitrine)
+- [x] FM-08: telas do GitLab e a sidebar lendo `/sources` (Vitrine), integrada em da33b47
 - [ ] FM-09: revisão de cada entrega (Revisor)
 - [ ] FM-10: verificação ponta a ponta (Maestro e Carlos)
 - [ ] FM-11: troca para o self-hosted, se a FM-02 começar no gitlab.com (Maestro e Carlos)
@@ -240,9 +240,9 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 | FM-03 | integrado | Branch `batedor/spike-gitlab` (3856d6b), integrada em 5a31907. Achados no `ARCHITECTURE.md` › "GitLab": `RateLimit-Reset` em epoch, commits sem `X-Total`, autor do MR sem e-mail. Pendentes: `Retry-After` no 429, group e project access tokens no gitlab.com e o que um bot Reporter enxerga |
 | FM-04 | integrado | Branch `arquivista/modelos-gitlab` (1b810a2, d6e36b8), integrada em 3cc8bad. Migration `0003`. Aprovada pelo Revisor sem bloqueios; aplicados o validator do autor do MR e as docstrings. Ficaram de fora o índice redundante `merge_requests (repository_id)` e um índice só em `commits (authored_at)` para a lista global, que só entra se a tela ficar lenta |
 | FM-05 | integrado | Variáveis no `config.py` em 7b5adf9. Conector na branch `conector/gitlab` (a3c540c, f9b65fe), integrada em 4f0fee6. O Revisor bloqueou uma vez (falha de TLS entrava no retry), e a correção foi aprovada. Decisões do Carlos aplicadas: arquivados com `archived=true` e `with_shared=false`. Pendente: decidir se o cliente recusa `http://` fora de localhost (antes do self-hosted) |
-| FM-06 | em andamento | |
+| FM-06 | integrado | Branch `sincronista/sync-gitlab` (1f6f834, aa1ca92), integrada em a076335. O Revisor bloqueou uma vez (um commit com data no futuro congelava o watermark), e a correção foi aprovada. Decisões do Carlos: pular o ClickUp quando não configurado; os commits empurrados tarde ficam como limitação conhecida |
 | FM-07 | integrado | Branch `portal/rotas-gitlab` (dd74814, d6ee014), integrada em 4cf2003. Aprovada pelo Revisor sem bloqueios, testada com dados numa transação desfeita. Ajustes do Carlos: `source` em `/people` (padrão `clickup`), `author_id` sem pessoas removidas, `/repositories` ordenado sem diferenciar maiúsculas. Ficaram para depois: `/sources` sem índice em `tasks.synced_at` e a busca de commits por sha ou autor |
-| FM-08 | pendente | |
+| FM-08 | integrado | Branch `vitrine/telas-gitlab` (1d44875, 70701d0), integrada em da33b47. O Revisor bloqueou uma vez (faltava "Todos" no estado; o sync não recarregava o GitLab), e a correção foi aprovada com os dados reais no navegador. Sugestões opcionais pendentes: textos de acessibilidade, marcar os arquivados no seletor e os contadores do GitLab no `SyncButton` |
 | FM-09 | pendente | |
 | FM-10 | pendente | |
 | FM-11 | pendente | Só se a FM-02 começar no gitlab.com |
