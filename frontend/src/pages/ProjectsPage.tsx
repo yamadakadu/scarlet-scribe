@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router'
 import type { ProjectNode } from '../api/client.ts'
 import { useProjects } from '../api/queries.ts'
+import { clickupPaths } from '../apps.ts'
 
 const KIND: Record<string, string> = { space: 'space', folder: 'pasta', list: 'lista' }
 
@@ -24,7 +25,7 @@ function Node({ node, depth }: { node: ProjectNode; depth: number }) {
         ) : (
           <span className="tree-toggle" aria-hidden="true" />
         )}
-        <Link to={`/tarefas?projeto=${node.id}`} title="Ver as tarefas deste projeto">
+        <Link to={clickupPaths.tasksOfProject(node.id)} title="Ver as tarefas deste projeto">
           {node.name}
         </Link>
         <span className="tag">{KIND[node.kind] ?? node.kind}</span>

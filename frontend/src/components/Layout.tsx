@@ -1,34 +1,35 @@
-import { NavLink, Outlet } from 'react-router'
+import { NavLink, Outlet, useLocation } from 'react-router'
+import { appForPath, CLICKUP } from '../apps.ts'
 import { ApiStatus } from './ApiStatus.tsx'
+import { AppSidebar } from './AppSidebar.tsx'
 import { SyncButton } from './SyncButton.tsx'
 
-const NAV_ITEMS = [
-  { to: '/tarefas', label: 'Tarefas' },
-  { to: '/arquivadas', label: 'Arquivadas' },
-  { to: '/marcos', label: 'Marcos' },
-  { to: '/projetos', label: 'Projetos' },
-]
-
 export function Layout() {
+  const { pathname } = useLocation()
+  const app = appForPath(pathname) ?? CLICKUP
+
   return (
     <div className="app">
-      <header className="app-header">
-        <span className="app-title">Scarlet Scribe</span>
-        <nav className="app-nav" aria-label="Principal">
-          {NAV_ITEMS.map((item) => (
-            <NavLink key={item.to} to={item.to}>
-              {item.label}
-            </NavLink>
-          ))}
-        </nav>
-        <div className="app-header-actions">
-          <ApiStatus />
-          <SyncButton />
-        </div>
-      </header>
-      <main className="app-main">
-        <Outlet />
-      </main>
+      <AppSidebar />
+      <div className="app-body">
+        <header className="app-header">
+          <span className="app-title">{app.label}</span>
+          <nav className="app-nav" aria-label={`Telas do ${app.label}`}>
+            {app.nav.map((item) => (
+              <NavLink key={item.path} to={`${app.basePath}/${item.path}`}>
+                {item.label}
+              </NavLink>
+            ))}
+          </nav>
+          <div className="app-header-actions">
+            <ApiStatus />
+            <SyncButton />
+          </div>
+        </header>
+        <main className="app-main">
+          <Outlet />
+        </main>
+      </div>
     </div>
   )
 }

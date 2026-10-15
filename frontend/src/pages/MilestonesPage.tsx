@@ -3,6 +3,7 @@ import { useMilestones, useProjects } from '../api/queries.ts'
 import { endOfLocalDay, formatLongDay, isValidDay, localDay, startOfLocalDay } from '../lib/dates.ts'
 import { flattenProjects } from '../lib/projects.ts'
 import type { Task } from '../api/client.ts'
+import { clickupPaths } from '../apps.ts'
 
 /** Marcos agrupados pelo dia local do prazo. Filtros na URL: projeto, de, ate. */
 export function MilestonesPage() {
@@ -78,7 +79,7 @@ export function MilestonesPage() {
           <ul className="plain-list">
             {items.map((m) => (
               <li key={m.id}>
-                <Link to={`/tarefas/${m.id}`}>{m.name}</Link>
+                <Link to={clickupPaths.task(m.id)}>{m.name}</Link>
                 <span className="muted"> · {m.container?.name ?? 'sem projeto'}</span>
                 {m.status && <span className="tag">{m.status}</span>}
               </li>
