@@ -1,0 +1,217 @@
+"""Amostra canônica: usa o `GitLabConnector` com o token real e imprime os
+repositórios e os primeiros merge requests e commits já no formato de `domain/`.
+
+Uso (a partir da raiz do repositório):
+
+    uv run --directory backend python scripts/gitlab_amostra_canonica.py
+        [--max-repos N] [--max-itens N] [--max-lotes N] [--desde-dias N] [--sem-mascara]
+
+Somente leitura: todas as requisições são GET (o transport deste script recusa
+qualquer outro método e conta as requisições). O token e a URL vêm do ambiente
+ou do `.env` da raiz, pelo `config.py`, e o token nunca é impresso.
+
+Por padrão, títulos, nomes e usernames saem mascarados (tipo e tamanho). Só
+`--sem-mascara` mostra os valores. E-mails **nunca** são impressos (só se
+estão presentes). Ids, datas, estados, branches e os caminhos dos repositórios
+aparecem sempre.
+
+`--desde-dias N` pede só o que mudou nos últimos N dias (modo incremental).
+Os MRs e commits são buscados nos `--max-repos` primeiros repositórios.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import sys
+from collections import Counter
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+import httpx
+
+from scarlet_scribe.config import Settings
+from scarlet_scribe.connectors.base import ConnectorError, ListingReport
+from scarlet_scribe.connectors.factory import create_code_connector
+from scarlet_scribe.domain.models import Commit, MergeRequest, Repository
+
+
+class _ScriptSettings(Settings):
+    # Este script não usa o banco: não exige DATABASE_URL.
+    database_url: str | None = None
+
+
+class _CountingTransport(httpx.AsyncBaseTransport):
+    """Conta as requisições e recusa qualquer método que não seja GET."""
+
+    def __init__(self) -> None:
+        self._inner = httpx.AsyncHTTPTransport()
+        self.total = 0
+        self.by_status: Counter[int] = Counter()
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        if request.method != "GET":
+            raise RuntimeError("este script só faz GET")
+        self.total += 1
+        response = await self._inner.handle_async_request(request)
+        self.by_status[response.status_code] += 1
+        return response
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
+
+
+class Masker:
+    def __init__(self, enabled: bool) -> None:
+        self.enabled = enabled
+
+    def __call__(self, value: str | None) -> str:
+        if value is None:
+            return "None"
+        if not self.enabled:
+            return repr(value)
+        return f"<str len={len(value)}>" if value else "<str vazia>"
+
+
+def fmt_dt(value: datetime | None) -> str:
+    return value.isoformat() if value is not None else "None"
+
+
+def presence(value: str | None) -> str:
+    return "presente" if value else "ausente"
+
+
+def print_report(title: str, report: ListingReport) -> None:
+    stats = report.to_stats()
+    print(f"  {title}: modo={stats['mode']} | completa={stats['complete']} | "
+          f"autoriza exclusões={stats['allows_deletions']} | erros={stats['errors']} | "
+          f"descartados={stats['discarded']}")
+    for name, part in report.parts.items():
+        print(f"    busca {name}: terminou={part.finished}  recebidos={part.received}")
+    for issue in report.errors:
+        print(f"    erro: {issue.resource} {issue.external_id or ''} status={issue.status_code} — {issue.reason}")
+    for issue in report.discarded:
+        print(f"    descartado: {issue.resource} {issue.external_id or '(sem id)'} — {issue.reason}")
+
+
+def print_repository(repo: Repository) -> None:
+    print(f"    {repo.external_id}  {repo.path_with_namespace}  default_branch={repo.default_branch!r}  "
+          f"archived={repo.archived}  atividade={fmt_dt(repo.last_activity_at)}  raw: {len(repo.raw)} chaves")
+
+
+def print_merge_request(mr: MergeRequest, mask: Masker) -> None:
+    print(f"    {mr.external_id}  iid={mr.iid}  repo={mr.external_repository_id}  state={mr.state.value}  "
+          f"draft={mr.draft}  titulo={mask(mr.title)}")
+    print(f"      {mr.source_branch!r} -> {mr.target_branch!r}  url={'presente' if mr.web_url else 'None'}  "
+          f"raw: {len(mr.raw)} chaves")
+    print(f"      criado={fmt_dt(mr.created_at_source)}  atualizado={fmt_dt(mr.source_updated_at)}  "
+          f"merged={fmt_dt(mr.merged_at)}  closed={fmt_dt(mr.closed_at)}")
+    if mr.author is not None:
+        print(f"      autor {mr.author.external_id}  source={mr.author.source}  "
+              f"username={mask(mr.author.username)}  email={presence(mr.author.email)}")
+    else:
+        print("      autor: None")
+
+
+def print_commit(commit: Commit, mask: Masker) -> None:
+    print(f"    {commit.external_id[:30]}…  short={commit.short_sha}  titulo={mask(commit.title)}")
+    print(f"      autor={mask(commit.author_name)}  email={presence(commit.author_email)}  "
+          f"authored={fmt_dt(commit.authored_at)}  committed={fmt_dt(commit.committed_at)}  "
+          f"url={'presente' if commit.web_url else 'None'}  raw: {len(commit.raw)} chaves")
+
+
+def raw_has_secret(records: list[Any], secret: str) -> bool:
+    return secret in json.dumps([r.raw for r in records], ensure_ascii=False)
+
+
+async def run(args: argparse.Namespace) -> int:
+    settings = _ScriptSettings()
+    if not settings.gitlab_enabled or settings.gitlab_api_token is None:
+        print("Erro: GITLAB_URL, GITLAB_API_TOKEN e GITLAB_GROUP_IDS ou GITLAB_PROJECT_IDS "
+              "precisam estar definidos.", file=sys.stderr)
+        return 2
+    mask = Masker(enabled=not args.sem_mascara)
+    transport = _CountingTransport()
+    since = datetime.now(UTC) - timedelta(days=args.desde_dias) if args.desde_dias else None
+    print(f"Escopo: {len(settings.gitlab_group_ids)} grupo(s) e {len(settings.gitlab_project_ids)} "
+          f"projeto(s) avulso(s); {'incremental desde ' + fmt_dt(since) if since else 'listagem completa'}; "
+          f"títulos/nomes/usernames {'mascarados' if mask.enabled else 'SEM máscara'}; e-mails nunca impressos")
+
+    repositories: list[Repository] = []
+    mrs: list[MergeRequest] = []
+    commits: list[Commit] = []
+    try:
+        async with create_code_connector(settings, transport=transport) as connector:
+            print(f"Fonte: {connector.source}")
+
+            snapshot = await connector.fetch_repositories()
+            repositories = snapshot.repositories
+            print(f"\n[Repositórios] {len(repositories)}  arquivados: {sum(r.archived for r in repositories)}  "
+                  f"vazios (sem default_branch): {sum(r.default_branch is None for r in repositories)}  "
+                  f"ids repetidos: {len(repositories) - len({r.external_id for r in repositories})}")
+            for repo in repositories[: args.max_itens]:
+                print_repository(repo)
+            print_report("Repositórios", snapshot.report)
+
+            for repo in repositories[: args.max_repos]:
+                print(f"\n--- Repositório {repo.external_id} ({repo.path_with_namespace}) ---")
+
+                repo_mrs: list[MergeRequest] = []
+                mr_listing = connector.iter_merge_requests(repo.external_id, updated_since=since)
+                batches = 0
+                async for batch in mr_listing:
+                    batches += 1
+                    repo_mrs.extend(batch)
+                    if batches >= args.max_lotes:
+                        print(f"(iteração de MRs interrompida pelo script após {batches} lote(s): --max-lotes)")
+                        break
+                mrs.extend(repo_mrs)
+                print(f"[Merge requests] {len(repo_mrs)} em {batches} lote(s); "
+                      f"estados: {dict(Counter(m.state.value for m in repo_mrs))}; "
+                      f"com autor: {sum(m.author is not None for m in repo_mrs)}; "
+                      f"ids repetidos: {len(repo_mrs) - len({m.external_id for m in repo_mrs})}")
+                for mr in repo_mrs[: args.max_itens]:
+                    print_merge_request(mr, mask)
+                print_report("MRs", mr_listing.report)
+
+                repo_commits: list[Commit] = []
+                commit_listing = connector.iter_commits(repo.external_id, since=since)
+                batches = 0
+                async for batch in commit_listing:
+                    batches += 1
+                    repo_commits.extend(batch)
+                    if batches >= args.max_lotes:
+                        print(f"(iteração de commits interrompida pelo script após {batches} lote(s): --max-lotes)")
+                        break
+                commits.extend(repo_commits)
+                print(f"[Commits] {len(repo_commits)} em {batches} lote(s); "
+                      f"shas repetidos: {len(repo_commits) - len({c.sha for c in repo_commits})}")
+                for commit in repo_commits[: args.max_itens]:
+                    print_commit(commit, mask)
+                print_report("Commits", commit_listing.report)
+    except ConnectorError as exc:
+        print(f"Erro do conector: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        print(f"\nRequisições GET: {transport.total} (status: {dict(transport.by_status)})")
+
+    secret = settings.gitlab_api_token.get_secret_value()
+    people = [m.author for m in mrs if m.author is not None]
+    leaked = raw_has_secret([*repositories, *mrs, *commits, *people], secret)
+    print(f"raw sem o token: {'FALHOU' if leaked else 'ok'}")
+    return 1 if leaked else 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--max-repos", type=int, default=2, help="em quantos repositórios buscar MRs e commits")
+    parser.add_argument("--max-itens", type=int, default=5, help="quantos itens imprimir em detalhe")
+    parser.add_argument("--max-lotes", type=int, default=3, help="teto de lotes (páginas) por listagem")
+    parser.add_argument("--desde-dias", type=int, default=0, help="só o que mudou nos últimos N dias")
+    parser.add_argument("--sem-mascara", action="store_true", help="mostra títulos, nomes e usernames")
+    return asyncio.run(run(parser.parse_args()))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

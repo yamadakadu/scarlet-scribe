@@ -22,7 +22,15 @@ from datetime import datetime
 from types import TracebackType
 from typing import Any, Protocol, Self, runtime_checkable
 
-from scarlet_scribe.domain.models import Container, Person, Task, Workspace
+from scarlet_scribe.domain.models import (
+    Commit,
+    Container,
+    MergeRequest,
+    Person,
+    Repository,
+    Task,
+    Workspace,
+)
 
 # --- Erros -----------------------------------------------------------------
 
@@ -228,6 +236,56 @@ class TaskListing:
         self.report.finished = True
 
 
+@dataclass
+class RepositorySnapshot:
+    """Repositórios de uma fonte de código. Sempre a listagem completa (`full`).
+
+    `report.allows_deletions` (igual a `report.complete` aqui) diz se dá para
+    marcar exclusões. As `parts` têm uma entrada por grupo (`group:<id>`) e por
+    projeto avulso (`project:<id>`) configurados.
+    """
+
+    repositories: list[Repository]
+    report: ListingReport
+
+
+type BatchSource[T] = Callable[[ListingReport], AsyncIterator[list[T]]]
+
+
+class BatchListing[T]:
+    """Registros em lotes (uma página por lote), iteráveis uma única vez.
+
+    O mesmo contrato do `TaskListing`, para qualquer tipo de registro:
+
+        listing = connector.iter_merge_requests(repo_id, updated_since=...)
+        async for batch in listing:
+            ...  # upsert do lote
+        if listing.report.allows_deletions:  # completa e `full`
+            ...
+
+    O `report` é preenchido durante a iteração; leia-o depois do `async for`.
+    Erros que deixam a listagem parcial **não** interrompem com exceção: a
+    iteração termina e o erro fica em `report.errors`. Só `ConnectorAuthError` e
+    `ConnectorConfigError` saem como exceção.
+    """
+
+    def __init__(self, source: BatchSource[T], *, mode: ListingMode = ListingMode.FULL) -> None:
+        self.report = ListingReport(mode=mode)
+        self._source = source
+        self._started = False
+
+    def __aiter__(self) -> AsyncIterator[list[T]]:
+        if self._started:
+            raise RuntimeError("uma BatchListing só pode ser iterada uma vez")
+        self._started = True
+        return self._run()
+
+    async def _run(self) -> AsyncIterator[list[T]]:
+        async for batch in self._source(self.report):
+            yield batch
+        self.report.finished = True
+
+
 # --- Protocolo -------------------------------------------------------------
 
 
@@ -295,7 +353,90 @@ class Connector(Protocol):
         ...
 
 
+@runtime_checkable
+class CodeConnector(Protocol):
+    """Fonte de código somente leitura (repositórios, merge requests e commits).
+
+    Protocolo separado do `Connector` (que tem o formato de gerenciamento de
+    tarefas do ClickUp). Uma instância por execução de sync, usada como async
+    context manager:
+
+        async with create_code_connector(settings) as connector:
+            snapshot = await connector.fetch_repositories()
+            for repo in snapshot.repositories:
+                mrs = connector.iter_merge_requests(repo.external_id, updated_since=...)
+                async for batch in mrs:
+                    ...
+                commits = connector.iter_commits(repo.external_id, since=...)
+                async for batch in commits:
+                    ...
+
+    Todos os registros devolvidos são modelos de `domain/`, com
+    `source == connector.source`. Os ids de repositório são os `external_id` de
+    `Repository`.
+    """
+
+    @property
+    def source(self) -> str:
+        """Nome da ferramenta de origem, gravado em `source` (por exemplo `gitlab`)."""
+        ...
+
+    async def __aenter__(self) -> Self: ...
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None: ...
+
+    async def fetch_repositories(self) -> RepositorySnapshot:
+        """Repositórios configurados (grupos com subgrupos e arquivados, sem os compartilhados
+        de outros grupos, mais os projetos avulsos), sem repetir. Sempre a listagem completa.
+
+        Erros num recurso (grupo ou projeto) **não** saem como exceção: vão para
+        `report.errors` e a listagem fica parcial. 403/404, resposta fora do
+        formato e paginação que não termina deixam a busca seguir para os outros
+        recursos; outros erros (5xx, 429 ou timeout persistentes) a interrompem ali.
+
+        Exceções (o sync trata como fatais): `ConnectorAuthError` (401) e
+        `ConnectorConfigError`. O chamador deve capturar `ConnectorError`, a base.
+        """
+        ...
+
+    def iter_merge_requests(
+        self, repository_id: str, *, updated_since: datetime | None = None
+    ) -> BatchListing[MergeRequest]:
+        """Merge requests de um repositório (todos os estados), em lotes.
+
+        - `updated_since=None`: modo `full`.
+        - `updated_since=<datetime com fuso>`: modo `incremental`, só os MRs
+          alterados depois desse instante. A margem de segurança é do chamador.
+          Uma listagem incremental nunca autoriza exclusões.
+
+        Cada `external_id` sai no máximo uma vez. `MergeRequest.author` traz a
+        `Person` do autor, para o sync gravar em `people`. Um erro de recurso
+        (403, inclusive MRs desativados no projeto, ou 404) vai para
+        `report.errors`. `report.parts` tem a busca `merge_requests`.
+        """
+        ...
+
+    def iter_commits(
+        self, repository_id: str, *, since: datetime | None = None
+    ) -> BatchListing[Commit]:
+        """Commits de um repositório em todos os branches, em lotes.
+
+        - `since=None`: modo `full`; com `datetime` com fuso, `incremental`.
+        - Cada sha sai no máximo uma vez na iteração.
+        - Erros de recurso vão para `report.errors`; um repositório vazio pode
+          responder 404. `report.parts` tem a busca `commits`.
+        """
+        ...
+
+
 __all__ = [
+    "BatchListing",
+    "CodeConnector",
     "Connector",
     "ConnectorAuthError",
     "ConnectorConfigError",
@@ -304,6 +445,7 @@ __all__ = [
     "ListingMode",
     "ListingPart",
     "ListingReport",
+    "RepositorySnapshot",
     "StructureSnapshot",
     "TaskListing",
 ]
