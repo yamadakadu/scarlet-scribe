@@ -9,6 +9,11 @@ export type TaskDetail = components['schemas']['TaskDetail']
 export type ProjectNode = components['schemas']['ProjectNode']
 export type Person = components['schemas']['PersonOut']
 export type SyncRun = components['schemas']['SyncRunOut']
+export type Repository = components['schemas']['RepositoryOut']
+export type MergeRequest = components['schemas']['MergeRequestOut']
+export type Commit = components['schemas']['CommitOut']
+export type Source = components['schemas']['SourceOut']
+export type MergeRequestState = components['schemas']['MergeRequestState']
 export type TaskOrder = components['schemas']['TaskOrder']
 
 export class ApiError extends Error {

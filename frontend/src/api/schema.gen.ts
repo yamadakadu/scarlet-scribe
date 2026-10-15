@@ -195,10 +195,123 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Sources
+         * @description Uma entrada por app, sempre `clickup` e depois `gitlab`.
+         *
+         *     `last_synced_at` vem do maior `synced_at` das linhas da fonte (`tasks` e
+         *     `repositories`), sem depender de `sync_runs.stats`.
+         */
+        get: operations["list_sources"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Repositories */
+        get: operations["list_repositories"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/merge-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Merge Requests
+         * @description Mais recentemente alterados primeiro. MRs de repositórios removidos ficam de fora.
+         */
+        get: operations["list_merge_requests"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/commits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Commits
+         * @description Filtros de data sobre `authored_at`; mais recentes primeiro, sem data no fim.
+         */
+        get: operations["list_commits"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** CommitOut */
+        CommitOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Sha */
+            sha: string;
+            /** Short Sha */
+            short_sha: string | null;
+            /** Title */
+            title: string;
+            /** Author Name */
+            author_name: string | null;
+            /** Authored At */
+            authored_at: string | null;
+            /** Committed At */
+            committed_at: string | null;
+            /** Web Url */
+            web_url: string | null;
+            repository: components["schemas"]["RepositoryRef"];
+        };
+        /** CommitPage */
+        CommitPage: {
+            /** Items */
+            items: components["schemas"]["CommitOut"][];
+            /**
+             * Total
+             * @description Total de registros que atendem aos filtros, sem paginação
+             */
+            total: number;
+        };
         /**
          * ContainerKind
          * @description Nível de um container na árvore. A UI chama qualquer um de "projeto".
@@ -245,6 +358,63 @@ export interface components {
             /** @description Run de sync mais recente; nulo se nunca houve um ou se o banco não respondeu */
             latest_sync: components["schemas"]["SyncRunOut"] | null;
         };
+        /** MergeRequestAuthor */
+        MergeRequestAuthor: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Username */
+            username: string | null;
+        };
+        /** MergeRequestOut */
+        MergeRequestOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Iid */
+            iid: number;
+            /** Title */
+            title: string;
+            state: components["schemas"]["MergeRequestState"];
+            /** Draft */
+            draft: boolean;
+            /** Source Branch */
+            source_branch: string | null;
+            /** Target Branch */
+            target_branch: string | null;
+            /** Web Url */
+            web_url: string | null;
+            /** Created At Source */
+            created_at_source: string | null;
+            /** Merged At */
+            merged_at: string | null;
+            /** Closed At */
+            closed_at: string | null;
+            /** Source Updated At */
+            source_updated_at: string | null;
+            repository: components["schemas"]["RepositoryRef"];
+            author: components["schemas"]["MergeRequestAuthor"] | null;
+        };
+        /** MergeRequestPage */
+        MergeRequestPage: {
+            /** Items */
+            items: components["schemas"]["MergeRequestOut"][];
+            /**
+             * Total
+             * @description Total de registros que atendem aos filtros, sem paginação
+             */
+            total: number;
+        };
+        /**
+         * MergeRequestState
+         * @description Estados canônicos de um merge request; hoje iguais aos do GitLab.
+         * @enum {string}
+         */
+        MergeRequestState: "opened" | "closed" | "merged" | "locked";
         /** PersonOut */
         PersonOut: {
             /**
@@ -297,6 +467,78 @@ export interface components {
         ProjectTree: {
             /** Items */
             items: components["schemas"]["ProjectNode"][];
+            /**
+             * Total
+             * @description Total de registros que atendem aos filtros, sem paginação
+             */
+            total: number;
+        };
+        /** RepositoryOut */
+        RepositoryOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Path With Namespace */
+            path_with_namespace: string;
+            /** Web Url */
+            web_url: string | null;
+            /** Default Branch */
+            default_branch: string | null;
+            /** Archived */
+            archived: boolean;
+            /** Last Activity At */
+            last_activity_at: string | null;
+        };
+        /** RepositoryPage */
+        RepositoryPage: {
+            /** Items */
+            items: components["schemas"]["RepositoryOut"][];
+            /**
+             * Total
+             * @description Total de registros que atendem aos filtros, sem paginação
+             */
+            total: number;
+        };
+        /** RepositoryRef */
+        RepositoryRef: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Path With Namespace */
+            path_with_namespace: string;
+        };
+        /** SourceOut */
+        SourceOut: {
+            /**
+             * Id
+             * @enum {string}
+             */
+            id: "clickup" | "gitlab";
+            /** Name */
+            name: string;
+            /**
+             * Enabled
+             * @description Fonte configurada no servidor (token e escopo preenchidos)
+             */
+            enabled: boolean;
+            /**
+             * Last Synced At
+             * @description Maior synced_at das linhas da fonte; nulo se nada foi sincronizado
+             */
+            last_synced_at: string | null;
+        };
+        /** SourcePage */
+        SourcePage: {
+            /** Items */
+            items: components["schemas"]["SourceOut"][];
             /**
              * Total
              * @description Total de registros que atendem aos filtros, sem paginação
@@ -580,6 +822,8 @@ export interface operations {
             query?: {
                 /** @description Busca no nome de usuário ou no e-mail, sem diferenciar maiúsculas */
                 q?: string | null;
+                /** @description Fonte das pessoas: 'clickup' (padrão) ou 'gitlab' */
+                source?: string;
                 /** @description Itens por página (máximo 200) */
                 limit?: number;
                 /** @description Itens a pular */
@@ -888,6 +1132,186 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SyncRunOut"] | null;
+                };
+            };
+            /** @description Banco de dados indisponível */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+        };
+    };
+    list_sources: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourcePage"];
+                };
+            };
+            /** @description Banco de dados indisponível */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+        };
+    };
+    list_repositories: {
+        parameters: {
+            query?: {
+                /** @description Busca no nome ou no caminho completo, sem diferenciar maiúsculas */
+                q?: string | null;
+                /** @description false (padrão) traz só os ativos; true, só os arquivados */
+                archived?: boolean;
+                /** @description Itens por página (máximo 200) */
+                limit?: number;
+                /** @description Itens a pular */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositoryPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Banco de dados indisponível */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+        };
+    };
+    list_merge_requests: {
+        parameters: {
+            query?: {
+                /** @description Repositório */
+                repository_id?: string | null;
+                /** @description Estado do MR; repita o parâmetro para vários */
+                state?: components["schemas"]["MergeRequestState"][] | null;
+                /** @description Pessoa autora */
+                author_id?: string | null;
+                /** @description Busca no título, sem diferenciar maiúsculas */
+                q?: string | null;
+                /** @description Alterado na origem a partir deste instante (inclusive); uma data pura vale meia-noite UTC */
+                updated_from?: string | null;
+                /** @description Itens por página (máximo 200) */
+                limit?: number;
+                /** @description Itens a pular */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MergeRequestPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Banco de dados indisponível */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+        };
+    };
+    list_commits: {
+        parameters: {
+            query?: {
+                /** @description Repositório */
+                repository_id?: string | null;
+                /** @description Criado a partir deste instante (inclusive); uma data pura vale meia-noite UTC */
+                from?: string | null;
+                /** @description Criado até este instante (inclusive); uma data pura (AAAA-MM-DD) inclui o dia inteiro, até 23:59:59.999999 UTC */
+                to?: string | null;
+                /** @description Busca no título, sem diferenciar maiúsculas */
+                q?: string | null;
+                /** @description Itens por página (máximo 200) */
+                limit?: number;
+                /** @description Itens a pular */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommitPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
             /** @description Banco de dados indisponível */
