@@ -54,7 +54,13 @@ async def list_merge_requests(
     if state:
         stmt = stmt.where(MergeRequestRow.state.in_(state))
     if author_id is not None:
-        stmt = stmt.where(MergeRequestRow.author_id == author_id)
+        stmt = stmt.where(
+            MergeRequestRow.author_id.in_(
+                select(PersonRow.id).where(
+                    PersonRow.id == author_id, PersonRow.deleted_at.is_(None)
+                )
+            )
+        )
     if q:
         stmt = stmt.where(MergeRequestRow.title.ilike(like_pattern(q), escape="\\"))
     if updated_from is not None:

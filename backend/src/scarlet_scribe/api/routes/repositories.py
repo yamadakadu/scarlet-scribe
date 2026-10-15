@@ -3,7 +3,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Query
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import defer
 
 from scarlet_scribe.api.deps import PaginationDep, SessionDep
@@ -37,6 +37,6 @@ async def list_repositories(
                 RepositoryRow.path_with_namespace.ilike(pattern, escape="\\"),
             )
         )
-    stmt = stmt.order_by(RepositoryRow.path_with_namespace, RepositoryRow.id)
+    stmt = stmt.order_by(func.lower(RepositoryRow.path_with_namespace), RepositoryRow.id)
     rows, total = await paginate(session, stmt, page, options=[defer(RepositoryRow.raw)])
     return RepositoryPage(items=[RepositoryOut.model_validate(r) for r in rows], total=total)
