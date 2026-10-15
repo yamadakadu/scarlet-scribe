@@ -38,10 +38,10 @@ export const APPS: AppDef[] = [
     basePath: '/clickup',
     enabled: true,
     nav: [
+      { path: CLICKUP_ROUTES.projects, label: 'Projetos' },
       { path: CLICKUP_ROUTES.tasks, label: 'Tarefas' },
       { path: CLICKUP_ROUTES.archived, label: 'Arquivadas' },
       { path: CLICKUP_ROUTES.milestones, label: 'Marcos' },
-      { path: CLICKUP_ROUTES.projects, label: 'Projetos' },
     ],
   },
   {
