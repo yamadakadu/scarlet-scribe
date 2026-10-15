@@ -286,7 +286,6 @@ class BatchListing[T]:
         self.report.finished = True
 
 
-
 # --- Protocolo -------------------------------------------------------------
 
 
@@ -392,8 +391,8 @@ class CodeConnector(Protocol):
     ) -> None: ...
 
     async def fetch_repositories(self) -> RepositorySnapshot:
-        """Repositórios configurados (grupos com subgrupos, sem arquivados, e projetos
-        avulsos), sem repetir. Sempre a listagem completa.
+        """Repositórios configurados (grupos com subgrupos e arquivados, sem os compartilhados
+        de outros grupos, mais os projetos avulsos), sem repetir. Sempre a listagem completa.
 
         Erros num recurso (grupo ou projeto) **não** saem como exceção: vão para
         `report.errors` e a listagem fica parcial. 403/404, resposta fora do

@@ -433,10 +433,14 @@ class GitLabClient:
     # --- Endpoints de leitura ----------------------------------------------
 
     def iter_group_project_pages(self, group_id: str | int) -> AsyncIterator[GitLabPage[GitLabProject]]:
-        """`GET /groups/:id/projects?include_subgroups=true&archived=false`, página a página."""
+        """`GET /groups/:id/projects?include_subgroups=true&with_shared=false`, página a página.
+
+        Sem filtro de `archived`: os arquivados vêm com `archived=true`. Com
+        `with_shared=false`, projetos de outros grupos só entram por `GITLAB_PROJECT_IDS`.
+        """
         return self._iter_pages(
             f"/groups/{quote_id(group_id)}/projects",
-            [("include_subgroups", "true"), ("archived", _bool(False))],
+            [("include_subgroups", "true"), ("with_shared", _bool(False))],
             GitLabProject,
         )
 
@@ -551,10 +555,11 @@ class GitLabClient:
                     ) from None
                 reason = f"timeout ({type(exc).__name__})"
             except _TRANSIENT_NETWORK_ERRORS as exc:
-                if isinstance(exc.__cause__, ssl.SSLError):
+                tls_error = _find_tls_error(exc)
+                if tls_error is not None:
                     # Certificado recusado: repetir não resolve.
                     raise GitLabHTTPError(
-                        f"GET {path}: falha de TLS ({type(exc.__cause__).__name__}); "
+                        f"GET {path}: falha de TLS ({type(tls_error).__name__}); "
                         "confira GITLAB_URL e GITLAB_CA_BUNDLE",
                         status_code=None,
                         path=path,
@@ -652,6 +657,22 @@ class GitLabClient:
             await self._sleep(wait)
 
         raise AssertionError("inalcançável")  # pragma: no cover
+
+
+def _find_tls_error(exc: BaseException) -> ssl.SSLError | None:
+    """Percorre a cadeia `__cause__`/`__context__` até achar um `ssl.SSLError`.
+
+    No httpx 0.28/httpcore 1.0 o erro de TLS fica dois níveis abaixo do
+    `httpx.ConnectError`.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        if isinstance(current, ssl.SSLError):
+            return current
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return None
 
 
 def _error_detail(response: httpx.Response) -> str:

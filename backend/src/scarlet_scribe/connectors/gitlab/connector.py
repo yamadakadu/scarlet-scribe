@@ -2,8 +2,9 @@
 
 - Uma instância de `GitLabClient` por execução, fechada no `__aexit__`.
 - Somente GET (o cliente não tem outra coisa).
-- Repositórios: os grupos de `GITLAB_GROUP_IDS` (com subgrupos, sem arquivados) e
-  os projetos avulsos de `GITLAB_PROJECT_IDS`, sem repetir. Um projeto avulso já
+- Repositórios: os grupos de `GITLAB_GROUP_IDS` (com subgrupos e arquivados, sem
+  projetos compartilhados de outros grupos) e os projetos avulsos de
+  `GITLAB_PROJECT_IDS`, sem repetir. Um projeto avulso já
   visto na listagem de um grupo (pelo id ou pelo caminho) não é buscado de novo.
 - 401 propaga (`GitLabAuthError`, que é um `ConnectorAuthError`): o sync falha.
 - Um erro num recurso (403/404, resposta 200 fora do formato, paginação que não
