@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useLocation } from 'react-router'
-import { appForPath, CLICKUP } from '../apps.ts'
+import { appForPath, CLICKUP, GITHUB_REPO_URL } from '../apps.ts'
+import { GitHubIcon } from '../assets/icons/AppIcons.tsx'
 import { ApiStatus } from './ApiStatus.tsx'
 import { AppSidebar } from './AppSidebar.tsx'
 import { SyncButton } from './SyncButton.tsx'
@@ -24,6 +25,16 @@ export function Layout() {
           <div className="app-header-actions">
             <ApiStatus />
             <SyncButton />
+            <a
+              className="github-link"
+              href={GITHUB_REPO_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Repositório no GitHub"
+              title="Repositório no GitHub"
+            >
+              <GitHubIcon />
+            </a>
           </div>
         </header>
         <main className="app-main">

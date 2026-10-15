@@ -131,7 +131,11 @@ export function SyncButton() {
       <button type="button" onClick={click} disabled={disabled} aria-busy={active}>
         {label}
       </button>
-      {active && <progress aria-label="Sync em andamento" />}
+      {active && (
+        <div className="sync-bar" role="progressbar" aria-label="Sync em andamento">
+          <div className="sync-bar-fill" />
+        </div>
+      )}
       {info && (
         <span className={`sync-info${tone ? ` sync-info--${tone}` : ''}`} role="status">
           {info}

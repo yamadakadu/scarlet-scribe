@@ -49,6 +49,9 @@ export const APPS: AppDef[] = [
   },
 ]
 
+/** Repositório do projeto no GitHub (origin do git, convertido para https). */
+export const GITHUB_REPO_URL = 'https://github.com/yamadakadu/scarlet-scribe'
+
 export const CLICKUP = APPS[0]!
 
 /** Caminhos do ClickUp derivados do basePath, para os links internos. */

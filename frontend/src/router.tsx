@@ -27,7 +27,7 @@ export const router = createBrowserRouter([
       },
       { path: 'tarefas', element: <LegacyRedirect to={() => clickupPaths.tasks} /> },
       { path: 'tarefas/:id', element: <LegacyRedirect to={clickupPaths.task} /> },
-      { path: CLICKUP_ROUTES.archived, element: <LegacyRedirect to={() => clickupPaths.archived} /> },
+      { path: 'arquivadas', element: <LegacyRedirect to={() => clickupPaths.archived} /> },
       { path: 'marcos', element: <LegacyRedirect to={() => clickupPaths.milestones} /> },
       { path: 'projetos', element: <LegacyRedirect to={() => clickupPaths.projects} /> },
       { path: '*', element: <NotFoundPage /> },
