@@ -17,6 +17,13 @@ export interface AppDef {
   hint?: string
 }
 
+export const CLICKUP_ROUTES = {
+  tasks: 'tarefas',
+  archived: 'arquivadas',
+  milestones: 'marcos',
+  projects: 'projetos',
+} as const
+
 export const APPS: AppDef[] = [
   {
     id: 'clickup',
@@ -25,10 +32,10 @@ export const APPS: AppDef[] = [
     basePath: '/clickup',
     enabled: true,
     nav: [
-      { path: 'tarefas', label: 'Tarefas' },
-      { path: 'arquivadas', label: 'Arquivadas' },
-      { path: 'marcos', label: 'Marcos' },
-      { path: 'projetos', label: 'Projetos' },
+      { path: CLICKUP_ROUTES.tasks, label: 'Tarefas' },
+      { path: CLICKUP_ROUTES.archived, label: 'Arquivadas' },
+      { path: CLICKUP_ROUTES.milestones, label: 'Marcos' },
+      { path: CLICKUP_ROUTES.projects, label: 'Projetos' },
     ],
   },
   {
@@ -46,12 +53,12 @@ export const CLICKUP = APPS[0]!
 
 /** Caminhos do ClickUp derivados do basePath, para os links internos. */
 export const clickupPaths = {
-  tasks: `${CLICKUP.basePath}/tarefas`,
-  task: (id: string) => `${CLICKUP.basePath}/tarefas/${id}`,
-  archived: `${CLICKUP.basePath}/arquivadas`,
-  milestones: `${CLICKUP.basePath}/marcos`,
-  projects: `${CLICKUP.basePath}/projetos`,
-  tasksOfProject: (projectId: string) => `${CLICKUP.basePath}/tarefas?projeto=${projectId}`,
+  tasks: `${CLICKUP.basePath}/${CLICKUP_ROUTES.tasks}`,
+  task: (id: string) => `${CLICKUP.basePath}/${CLICKUP_ROUTES.tasks}/${id}`,
+  archived: `${CLICKUP.basePath}/${CLICKUP_ROUTES.archived}`,
+  milestones: `${CLICKUP.basePath}/${CLICKUP_ROUTES.milestones}`,
+  projects: `${CLICKUP.basePath}/${CLICKUP_ROUTES.projects}`,
+  tasksOfProject: (projectId: string) => `${CLICKUP.basePath}/${CLICKUP_ROUTES.tasks}?projeto=${projectId}`,
 }
 
 export function appForPath(pathname: string): AppDef | undefined {

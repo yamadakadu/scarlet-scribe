@@ -9,7 +9,7 @@ export function AppSidebar() {
         if (!app.enabled) {
           const title = `${app.label} (${app.hint ?? 'em breve'})`
           return (
-            <span key={app.id} className="app-sidebar-item is-disabled" role="link" aria-disabled="true" aria-label={title} title={title}>
+            <span key={app.id} className="app-sidebar-item is-disabled" role="link" tabIndex={0} aria-disabled="true" aria-label={title} title={title}>
               <Icon />
             </span>
           )
