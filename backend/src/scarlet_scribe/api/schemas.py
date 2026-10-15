@@ -12,7 +12,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field
 
-from scarlet_scribe.domain.models import ContainerKind
+from scarlet_scribe.domain.models import ContainerKind, MergeRequestState
 from scarlet_scribe.domain.sync import SyncStatus, SyncTrigger
 
 
@@ -174,3 +174,81 @@ class TaskPage(Page[TaskOut]):
 class TaskDetail(TaskOut):
     parent: TaskRef | None
     subtasks: list[TaskOut]
+
+
+# --- Fontes e repositórios de código --------------------------------------------
+
+
+class SourceOut(ApiModel):
+    id: Literal["clickup", "gitlab"]
+    name: str
+    enabled: bool = Field(description="Fonte configurada no servidor (token e escopo preenchidos)")
+    last_synced_at: UtcDatetime | None = Field(
+        description="Maior synced_at das linhas da fonte; nulo se nada foi sincronizado"
+    )
+
+
+class SourcePage(Page[SourceOut]):
+    pass
+
+
+class RepositoryOut(ApiModel):
+    id: uuid.UUID
+    name: str
+    path_with_namespace: str
+    web_url: str | None
+    default_branch: str | None
+    archived: bool
+    last_activity_at: UtcDatetime | None
+
+
+class RepositoryPage(Page[RepositoryOut]):
+    pass
+
+
+class RepositoryRef(ApiModel):
+    id: uuid.UUID
+    name: str
+    path_with_namespace: str
+
+
+class MergeRequestAuthor(ApiModel):
+    id: uuid.UUID
+    username: str | None
+
+
+class MergeRequestOut(ApiModel):
+    id: uuid.UUID
+    iid: int
+    title: str
+    state: MergeRequestState
+    draft: bool
+    source_branch: str | None
+    target_branch: str | None
+    web_url: str | None
+    created_at_source: UtcDatetime | None
+    merged_at: UtcDatetime | None
+    closed_at: UtcDatetime | None
+    source_updated_at: UtcDatetime | None
+    repository: RepositoryRef
+    author: MergeRequestAuthor | None
+
+
+class MergeRequestPage(Page[MergeRequestOut]):
+    pass
+
+
+class CommitOut(ApiModel):
+    id: uuid.UUID
+    sha: str
+    short_sha: str | None
+    title: str
+    author_name: str | None
+    authored_at: UtcDatetime | None
+    committed_at: UtcDatetime | None
+    web_url: str | None
+    repository: RepositoryRef
+
+
+class CommitPage(Page[CommitOut]):
+    pass

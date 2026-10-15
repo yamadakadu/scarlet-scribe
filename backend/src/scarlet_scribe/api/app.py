@@ -12,7 +12,18 @@ from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from sqlalchemy import exc as sa_exc
 
-from scarlet_scribe.api.routes import health, milestones, people, projects, sync, tasks
+from scarlet_scribe.api.routes import (
+    commits,
+    health,
+    merge_requests,
+    milestones,
+    people,
+    projects,
+    repositories,
+    sources,
+    sync,
+    tasks,
+)
 from scarlet_scribe.api.schemas import ErrorDetail
 
 logger = logging.getLogger(__name__)
@@ -87,7 +98,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="scarlet-scribe",
         version="0.1.0",
-        description="API de leitura dos dados sincronizados do ClickUp (Fase 1, sem login).",
+        description="API de leitura dos dados sincronizados (ClickUp e repositórios de código) (Fase 1, sem login).",
         openapi_url=f"{API_PREFIX}/openapi.json",
         docs_url=f"{API_PREFIX}/docs",
         redoc_url=None,
@@ -98,7 +109,18 @@ def create_app() -> FastAPI:
     app.add_exception_handler(sa_exc.DBAPIError, _on_dbapi_error)
 
     unavailable = {503: {"model": ErrorDetail, "description": "Banco de dados indisponível"}}
-    for module in (health, projects, people, tasks, milestones, sync):
+    for module in (
+        health,
+        projects,
+        people,
+        tasks,
+        milestones,
+        sync,
+        sources,
+        repositories,
+        merge_requests,
+        commits,
+    ):
         # O /health declara o próprio 503 (com HealthOut), que prevalece.
         app.include_router(module.router, prefix=API_PREFIX, responses=unavailable)
     return app
