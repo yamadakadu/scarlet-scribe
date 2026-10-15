@@ -2,7 +2,7 @@
 
 Este plano diz o que será executado, por quem e em que ordem, para que o orquestrador acompanhe o andamento. O desenho técnico de cada item está em `ARCHITECTURE.md`; este documento não o repete.
 
-**Status:** Fase 1 em andamento. A arquitetura foi revisada com o Carlos; o andamento de cada tarefa está em "Acompanhamento".
+**Status:** Fase 1 em andamento (falta a F1-11). A Fase M (multi-integração: barra lateral de apps e GitLab) foi planejada em 2026-10-15 e começa junto com a F1-11. A arquitetura foi revisada com o Carlos; o andamento de cada tarefa está em "Acompanhamento".
 
 ## Agentes
 
@@ -148,6 +148,54 @@ Pontos levantados pelo Revisor na onda 1, que os agentes das próximas tarefas d
   - `include_closed=false` exclui as tarefas com `status_type` `done` ou `closed`;
   - `order_by=updated_at` usa a coluna `source_updated_at`.
 
+## Fase M: multi-integração (barra lateral de apps e GitLab)
+
+A plataforma passa a reunir várias ferramentas, e o GitLab é a segunda. O desenho está em `ARCHITECTURE.md` › "Fase M: multi-integração".
+
+Decisões do Carlos (2026-10-15):
+- **por enquanto, os apps só ficam visíveis no painel**, e o usuário alterna entre eles por uma barra lateral. Nada de cruzar dados nem de escrever nas ferramentas;
+- a barra lateral tem **só os aplicativos, com um ícone para cada um**, sem os grupos de telas de cada app;
+- o GitLab é **self-hosted**, e o primeiro recorte é **merge requests e commits**;
+- a Fase M **começa junto com a F1-11**: a barra lateral entra já, e o GitLab vem antes da Fase 2;
+- no futuro os apps vão se integrar, com **escrita em pontos específicos**. Isso muda a regra de somente leitura e é decidido ponto a ponto, numa etapa própria.
+
+### Checklist
+
+- [x] Decisões do Carlos registradas (2026-10-15)
+- [x] Plano de etapas definido (tabela abaixo)
+- [x] Base multi-fonte já existente: protocolo `Connector`, `create_connector`, chave `(source, external_id)` e `sync_state` por recurso
+- [x] Documentação atualizada: este plano, `ARCHITECTURE.md` e `CLAUDE.md`
+- [ ] Hooks estendidos ao GitLab: só GET em `connectors/gitlab/`, sem escrita no host do GitLab, e `selfcheck.py` passando (Maestro, antes da FM-05)
+- [ ] FM-01: barra lateral de apps (Vitrine)
+- [ ] FM-02: pré-requisitos do GitLab (Carlos)
+- [ ] FM-03: spike do GitLab (Batedor)
+- [ ] FM-04: modelo e tabelas do GitLab (Arquivista)
+- [ ] FM-05: conector GitLab e variáveis de ambiente (Conector e Alicerce)
+- [ ] FM-06: sync do GitLab (Sincronista)
+- [ ] FM-07: rotas `/sources`, `/repositories`, `/merge-requests` e `/commits` (Portal)
+- [ ] FM-08: telas do GitLab e a sidebar lendo `/sources` (Vitrine)
+- [ ] FM-09: revisão de cada entrega (Revisor)
+- [ ] FM-10: verificação ponta a ponta (Maestro e Carlos)
+
+### Tarefas
+
+| ID | Tarefa | Agente | Depende de | Onda | Entregável e critério de pronto |
+|---|---|---|---|---|---|
+| FM-01 | Barra lateral de apps: registro estático em `frontend/src/apps.ts` (`id`, `label`, `icon`, `basePath`, `nav`, `enabled`); `AppSidebar` com um botão de ícone por app (nome em `title`/`aria-label`), destaque no ativo, GitLab desabilitado com "em breve"; o header mostra as abas do app ativo; rotas com prefixo `/clickup/...` e redirecionamento das antigas; ícones SVG inline (paths do Simple Icons, CC0) sem dependência nova; em tela estreita, a sidebar vira uma faixa no topo | Vitrine | F1-09b | M0 | `npm run typecheck`, `npm run lint` e `npm run build` passam; no `npm run dev`, a sidebar mostra o ClickUp ativo e o GitLab desabilitado; as abas funcionam em `/clickup/...`; `/tarefas` redireciona; sem scroll horizontal na largura de celular |
+| FM-02 | Fornecer a URL do GitLab, um usuário bot com papel Reporter, um token só com `read_api` no `.env`, os grupos ou projetos a sincronizar e se o certificado TLS é interno | Carlos | — | M0 | `.env` preenchido (fora do git). O Maestro confirma que as variáveis existem, sem ler os valores |
+| FM-03 | Spike do GitLab (`backend/scripts/gitlab_spike.py`, só GET): autenticação e escopo do token, projetos por grupo, MRs com `updated_after`, commits por projeto, paginação e headers de rate limit | Batedor | FM-02 | M1 | Relatório com uma resposta por item e a evidência, sem dados sensíveis. O Maestro atualiza o `ARCHITECTURE.md` |
+| FM-04 | Modelos canônicos `Repository`, `MergeRequest` e `Commit` e a migration `0002` com `repositories`, `merge_requests` e `commits` | Arquivista | FM-03 | M2 | `alembic upgrade head` e `alembic downgrade -1` rodam limpos; `\d` mostra os índices únicos |
+| FM-05 | `connectors/gitlab/` (cliente só GET, schemas, mapper e conector) e a generalização mínima de `base.py`/`factory.py` para mais de uma fonte. Variáveis `GITLAB_*` em `config.py` e `.env.example` (Alicerce) | Conector e Alicerce | FM-03, FM-04 | M3 | Um script imprime repositórios, MRs e commits no formato canônico; o cliente não tem método de escrita; sem as variáveis do GitLab, nada muda para o ClickUp |
+| FM-06 | Passos do GitLab no `SyncService`: repositórios, MRs incrementais e commits por repositório; uma falha numa fonte deixa o run `partial` | Sincronista | FM-05 | M4 | Um sync termina `succeeded` com dados do GitLab no banco; um segundo sync não duplica; sem GitLab configurado, o sync do ClickUp segue igual |
+| FM-07 | Rotas `GET /sources`, `/repositories`, `/merge-requests` e `/commits` | Portal | FM-04 | M3 | `curl` em cada rota retorna o formato documentado; o OpenAPI é gerado |
+| FM-08 | Sidebar lendo `/sources`; telas Merge Requests, Commits e Repositórios em `/gitlab/...`; cliente TS regenerado | Vitrine | FM-01, FM-07 | M5 | Com o backend rodando, o GitLab fica habilitado na sidebar e mostra os dados sincronizados |
+| FM-09 | Revisão de cada entrega: FM-01, FM-03 a FM-08 | Revisor | cada entrega | contínua | Parecer "aprovado" ou uma lista de bloqueios |
+| FM-10 | Verificação ponta a ponta e atualização deste plano e do `CLAUDE.md` | Maestro e Carlos | todas | M6 | O Carlos valida no navegador a alternância entre ClickUp e GitLab |
+
+A FM-01 roda em paralelo à F1-11 e não depende do GitLab. A conferência visual da barra lateral entra na própria F1-11.
+
+**Fora da Fase M:** cruzar dados entre apps (por exemplo, MRs que citam uma tarefa do ClickUp), a escrita pontual nas ferramentas (quais pontos, qual token, auditoria e a mudança das regras), o Discord e outros apps, e o uso de tokens por pessoa no GitLab (a decidir junto com a Fase 2).
+
 ## Fase 2: autenticação e horas (à parte)
 
 Só começa depois da F1-11. Esta tabela é uma visão prévia e será detalhada quando a Fase 2 for liberada.
@@ -181,4 +229,14 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 | F1-09a | integrado | Branch `vitrine/scaffold` (f90301a, 1282231), integrada em 358dda4 |
 | F1-09b | integrado | Branch `vitrine/telas-fase1` (5c77ab6, 4f90196), integrada em 67f9854. Sugestões do Revisor aguardando o Carlos |
 | F1-12 | integrado | Branch `alicerce/frontend-compose` (55d6e05). Pendente: ver `api` e `worker` subindo, o que depende da F1-07 e da F1-08 (fica para a F1-11) |
-| F1-11 | pendente | |
+| F1-11 | pendente | Inclui a conferência visual da FM-01 |
+| FM-01 | pendente | Pode começar já |
+| FM-02 | pendente | Aguardando o Carlos |
+| FM-03 | pendente | |
+| FM-04 | pendente | |
+| FM-05 | pendente | Antes dela, o Maestro estende os hooks ao GitLab |
+| FM-06 | pendente | |
+| FM-07 | pendente | |
+| FM-08 | pendente | |
+| FM-09 | pendente | |
+| FM-10 | pendente | |

@@ -15,6 +15,7 @@ O projeto é construído em duas fases. **A autenticação é uma fase à parte 
 | Fase | Escopo | Fora do escopo |
 |---|---|---|
 | **Fase 1: estrutura inicial** | Monorepo e Docker Compose; cliente do ClickUp com o token do bot; modelo canônico e banco; sync de estrutura, tarefas e marcos (passos 1 a 3); worker e fila; API de leitura (`/projects`, `/people`, `/tasks`, `/milestones`, `/sync`); front com listagens e botão de sincronizar | Login, sessões, OAuth e **registro de horas**. As horas dependem do token de cada pessoa, que só existe depois da autenticação |
+| **Fase M: multi-integração** (começa junto com a F1-11, antes da Fase 2) | Barra lateral com os apps conectados; GitLab self-hosted como segunda fonte (repositórios, merge requests e commits), só leitura, com token de bot; rotas `/sources`, `/repositories`, `/merge-requests` e `/commits` | Cruzar dados entre apps; escrita nas ferramentas; login; Discord e outros apps |
 | **Fase 2: autenticação e horas (à parte)** | Login LDAP e sessões; proteção das rotas; conexão OAuth com o ClickUp; tabelas `app_users`, `sessions`, `clickup_connections` e `time_entries`; passo 4 do sync (horas por pessoa); rotas `/auth/*`, `/integrations/clickup/*` e `/time-entries*`; telas de login, "Conectar ClickUp" e "Minhas horas" | Verificação de identidade LDAP × ClickUp (etapa futura) |
 
 **Na Fase 1 a API não tem login.** Todas as rotas ficam abertas, então a aplicação só deve rodar localmente ou em rede interna até a Fase 2. O código da Fase 1 não deve antecipar a Fase 2: não cria tabelas, rotas ou dependências de autenticação. A Fase 2 entra depois, por cima da estrutura pronta: um `Depends(current_user)` nos routers, as tabelas novas numa migration própria e um passo novo no `SyncService`.
@@ -494,6 +495,64 @@ Formato de um run:
 }
 ```
 
+## Fase M: multi-integração
+
+Decisões do Carlos (2026-10-15). A plataforma passa a reunir várias ferramentas, e o GitLab é a segunda, depois do ClickUp. **Por enquanto, os apps só ficam visíveis no painel:** cada um tem a própria área, não há cruzamento de dados e nada é escrito nas ferramentas. No futuro os apps vão se integrar, com escrita em pontos específicos; essa mudança na regra de somente leitura será decidida ponto a ponto, numa etapa própria, e atualizará este documento, o `CLAUDE.md` e os hooks. As tarefas estão em `PLANO_DE_EXECUCAO.md` › "Fase M".
+
+### Navegação por app (front)
+
+- Uma **barra lateral** à esquerda lista só os aplicativos, cada um com o seu ícone (SVG inline, paths do Simple Icons, licença CC0), sem os grupos de telas de cada app. O nome do app vai em `title` e `aria-label`.
+- O app ativo fica destacado. As abas dele (no ClickUp: Tarefas, Arquivadas, Marcos e Projetos) ficam no header, ao lado de `ApiStatus` e `SyncButton`.
+- Um registro estático em `frontend/src/apps.ts` define, para cada app, `id`, `label`, `icon`, `basePath`, `nav` e `enabled`. Até o backend do GitLab existir, ele aparece desabilitado, com "em breve". Depois da FM-07, o `enabled` vem de `GET /sources`.
+- As rotas ganham o prefixo do app: `/clickup/tarefas`, `/clickup/tarefas/:id`, `/clickup/arquivadas`, `/clickup/marcos` e `/clickup/projetos`; depois, `/gitlab/merge-requests`, `/gitlab/commits` e `/gitlab/repositorios`. As rotas antigas redirecionam para as novas, e `/` vai para `/clickup/tarefas`.
+- Em telas estreitas, a barra lateral vira uma faixa de ícones no topo.
+
+### GitLab (self-hosted)
+
+- **Autenticação:** token de um usuário bot com papel **Reporter** nos grupos e projetos sincronizados, só com o escopo **`read_api`**, enviado no header `PRIVATE-TOKEN`. Ao contrário do ClickUp, o GitLab tem escopos: o `read_api` garante a leitura pelo próprio token, além da regra de só usar GET no código.
+- **Base:** `{GITLAB_URL}/api/v4`. O cliente aceita um bundle de CA próprio para certificados internos.
+- **Endpoints previstos (a confirmar no spike, FM-03):**
+
+  | Dado | Endpoint |
+  |---|---|
+  | Escopo do token | `GET /personal_access_tokens/self` |
+  | Projetos de um grupo | `GET /groups/:id/projects?include_subgroups=true&archived=false` |
+  | Projeto avulso | `GET /projects/:id` |
+  | Merge requests | `GET /projects/:id/merge_requests?state=all&updated_after=...` |
+  | Commits | `GET /projects/:id/repository/commits?since=...` (só o branch padrão ou `all=true`, a decidir pelo custo) |
+
+- **Paginação (a confirmar):** `per_page=100`, seguindo `X-Next-Page` ou o header `Link`; keyset onde houver suporte. `X-Total` some acima de 10 mil itens, então o cliente não depende dele.
+- **Rate limit (a confirmar):** headers `RateLimit-*` e 429 com `Retry-After`; o limite depende da configuração da instância. O cliente segue o mesmo padrão do ClickUp: limite preventivo configurável, ajustado só para baixo pelos headers, e retries com backoff.
+- **Variáveis (FM-05):** `GITLAB_URL`, `GITLAB_API_TOKEN`, `GITLAB_GROUP_IDS`, `GITLAB_PROJECT_IDS`, `GITLAB_CA_BUNDLE` (opcional) e `GITLAB_RATE_LIMIT_PER_MINUTE`. Cada fonte é opcional: sem as variáveis do GitLab, o sync e a API seguem só com o ClickUp.
+- **Código:** `connectors/gitlab/` com `client.py`, `schemas.py`, `mapper.py` e `connector.py`, como no ClickUp. `base.py` e `factory.py` são generalizados só no necessário para mais de uma fonte (por exemplo, `create_connectors(settings)` devolvendo os conectores configurados).
+
+### Banco (migration `0002`, a detalhar depois do spike)
+
+Mesmas convenções das tabelas sincronizadas (`id`, `source`, `external_id`, `raw`, `synced_at`, `deleted_at`):
+- `repositories`: nome, `path_with_namespace`, `web_url`, branch padrão e `archived`;
+- `merge_requests`: `repository_id`, `iid`, título, estado, branches de origem e de destino, autor, `web_url`, `created_at`, `merged_at`, `closed_at` e `source_updated_at`. Assignees e reviewers entram se o spike mostrar que vale a pena;
+- `commits`: `repository_id`, `sha`, título, nome e e-mail do autor, `authored_at` e `web_url`, únicos por `(repository_id, sha)`.
+
+Os membros do GitLab, quando entrarem, usam `people` com `source = 'gitlab'`, sem fundir com as pessoas do ClickUp por enquanto. Os watermarks vão para `sync_state` (`resource` como `gitlab:merge_requests:<repositório>`).
+
+### Sync
+
+O `SyncService` roda, no mesmo run e sob o mesmo advisory lock, os passos de cada fonte configurada. Uma falha numa fonte deixa o run `partial`, e não `failed`. `stats` ganha uma chave por fonte. Os passos do GitLab:
+1. repositórios, sempre completos, com exclusões só se a listagem vier completa;
+2. merge requests incrementais por `updated_after`, com a mesma margem de 5 min do ClickUp;
+3. commits de cada repositório desde o watermark.
+
+### API
+
+| Método e rota | Retorno |
+|---|---|
+| `GET /sources` | Os apps configurados, com `id`, `name`, `enabled` e o último sync. Alimenta a barra lateral |
+| `GET /repositories` | Lista paginada dos repositórios |
+| `GET /merge-requests` | Lista paginada; filtros `repository_id`, `state`, `q` e `updated_from` |
+| `GET /commits` | Lista paginada; filtros `repository_id`, `from`, `to` e `q` |
+
+Seguem as convenções de "API HTTP": prefixo `/api/v1`, `{ items, total }` e `deleted_at` filtrado.
+
 ## Estrutura do repositório (alvo)
 
 ```
@@ -529,4 +588,5 @@ docker-compose.yml  # postgres, api, worker, frontend
 
 A ordem das tarefas, o agente responsável por cada uma, as dependências e os critérios de pronto estão em **`PLANO_DE_EXECUCAO.md`**. Resumo:
 - **Fase 1:** monorepo, cliente do ClickUp com spike, banco, mapper, sync e worker, API de leitura e front.
+- **Fase M:** barra lateral de apps (junto com a F1-11), depois o GitLab: spike, banco, conector, sync, API e telas.
 - **Fase 2 (à parte):** LDAP, OAuth, horas e as telas correspondentes. Começa só depois que a Fase 1 estiver validada e que os itens 5 a 7 dos riscos estiverem resolvidos.
