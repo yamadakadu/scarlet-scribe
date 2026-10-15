@@ -1,4 +1,4 @@
-"""Configuração da aplicação, lida do ambiente (Fase 1).
+"""Configuração da aplicação, lida do ambiente (Fase 1 e Fase M).
 
 O `.env` fica na raiz do repositório. O caminho é resolvido a partir deste
 arquivo (backend/src/scarlet_scribe/config.py → raiz), e não do diretório
@@ -37,20 +37,46 @@ class Settings(BaseSettings):
     clickup_space_ids: Annotated[list[str], NoDecode] = Field(default_factory=list)
     clickup_rate_limit_per_minute: int = 100
 
+    # GitLab (token do bot com escopo `read_api`; vai em `PRIVATE-TOKEN`).
+    # Tudo opcional: a API e o sync funcionam sem GitLab (ver `gitlab_enabled`).
+    gitlab_url: str | None = None  # endereço da instância, sem /api/v4
+    gitlab_api_token: SecretStr | None = None
+    gitlab_group_ids: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    gitlab_project_ids: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    gitlab_ca_bundle: str | None = None
+    # gitlab.com permite 2000/min (spike FM-03); 600 dá folga e serve ao self-hosted.
+    gitlab_rate_limit_per_minute: int = 600
+
     # Sync
     sync_interval_minutes: int = 10
     sync_manual_cooldown_seconds: int = 60
     sync_full_reconcile_hours: int = 24
 
-    @field_validator("clickup_space_ids", mode="before")
+    @field_validator(
+        "clickup_space_ids", "gitlab_group_ids", "gitlab_project_ids", mode="before"
+    )
     @classmethod
-    def _split_space_ids(cls, value: object) -> object:
-        """Aceita lista separada por vírgula; vazio significa todos os spaces."""
+    def _split_ids(cls, value: object) -> object:
+        """Aceita lista separada por vírgula; vazio significa lista vazia."""
         if value is None:
             return []
         if isinstance(value, str):
             return [part.strip() for part in value.split(",") if part.strip()]
         return value
+
+    @field_validator("gitlab_url", mode="after")
+    @classmethod
+    def _strip_gitlab_url(cls, value: str | None) -> str | None:
+        return value.rstrip("/") if value else value
+
+    @property
+    def gitlab_enabled(self) -> bool:
+        """Verdadeiro com URL, token e ao menos um grupo ou projeto configurados."""
+        return bool(
+            self.gitlab_url
+            and self.gitlab_api_token
+            and (self.gitlab_group_ids or self.gitlab_project_ids)
+        )
 
 
 @lru_cache
