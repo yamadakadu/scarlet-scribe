@@ -387,7 +387,7 @@ Os passos rodam em ordem. Cada um faz commit próprio, então uma falha num pass
 Como o conector informa isso (`connectors/base.py`):
 - `fetch_structure()` devolve um `StructureSnapshot` (workspace, pessoas, containers em ordem de pai para filho, inclusive subfolders, e um `report`). Uma folder cujo pai não veio na resposta sai no fim, e esse pai pode não existir no banco.
 - `iter_tasks(updated_since=...)` devolve lotes de tarefas; o `report` é lido no fim da iteração.
-- Cada `report` traz `mode` (`full` ou `incremental`), `parts` (o estado de cada busca), `complete` (a iteração terminou, não houve erros, todas as buscas terminaram e todo descartado tem id) e `allows_deletions` (= `complete` e `full`). **Só `allows_deletions` autoriza exclusões.** Na estrutura, ele é igual a `complete`. Nas tarefas, a reconciliação exige `allows_deletions` da listagem de tarefas **e** da estrutura do mesmo run. O watermark do incremental só avança se `report.complete`. Os ids dos lotes e os de `report.discarded_ids` (tarefas com dados inválidos) contam como vistos. `report.to_stats()` vai para `stats`.
+- Cada `report` traz `mode` (`full` ou `incremental`), `parts` (o estado de cada busca), `complete` (a iteração terminou, não houve erros, todas as buscas terminaram e todo descartado tem id) e `allows_deletions` (= `complete` e `full`). **Só `allows_deletions` autoriza exclusões.** Na estrutura, ele é igual a `complete`. Nas tarefas, a reconciliação exige `allows_deletions` da listagem de tarefas **e** da estrutura do mesmo run. Por segurança, o serviço também exige que o `mode` do report seja o que ele pediu: um report `full` numa busca pedida como incremental é tratado como erro do conector e não autoriza exclusões. Quando as exclusões são puladas, `stats.task_listing` grava `deletions_skipped: true` e `deletions_skipped_reason` (por exemplo "estrutura parcial", "listagem de tarefas parcial" ou "modo da listagem diferente do pedido"). `last_full_sync_at` só avança quando a reconciliação de fato pôde marcar exclusões; senão o sync seguinte refaz a reconciliação completa. Custo conhecido: se a estrutura ficar parcial de forma permanente (por exemplo, um id em `CLICKUP_SPACE_IDS` que o bot não enxerga), todo sync vira completo e termina `partial`. O watermark do incremental só avança se `report.complete`. Os ids dos lotes e os de `report.discarded_ids` (tarefas com dados inválidos) contam como vistos. `report.to_stats()` vai para `stats`.
 - Exceções: `fetch_structure` levanta `ConnectorError` (inclusive `ConnectorAuthError` no 401) quando o workspace não pode ser lido, e o run termina `failed`. Na estrutura, um 403/404 ou uma resposta 200 fora do formato num recurso (a listagem de spaces, um space ou uma folder) vira erro daquele recurso, e a busca segue; um 5xx, 429 ou timeout persistente a interrompe; se a listagem de spaces falhar, há um erro só. Na iteração das tarefas, só 401 e erro de configuração saem como exceção; um erro numa busca (inclusive uma resposta sem a chave `tasks`) encerra só aquela busca e deixa a listagem parcial.
 4. **(Fase 2) Horas, uma vez por conexão `active`:** roda para todas as conexões, até `SYNC_TIME_ENTRIES_CONCURRENCY` pessoas em paralelo. Para cada pessoa:
    - decifra o token e cria um cliente próprio, que tem seu próprio rate limit;
@@ -400,16 +400,21 @@ Como o conector informa isso (`connectors/base.py`):
 
 Status final:
 - `succeeded`: todos os passos passaram;
-- `partial`: algum passo falhou, mas outros dados foram gravados. Na Fase 2 isso inclui falhas nas horas de alguma pessoa; os erros de cada pessoa ficam em `stats.time_entries.errors` e em `clickup_connections.last_error`;
+- `partial`: algum passo falhou, ou a listagem da estrutura ou das tarefas veio incompleta, mas outros dados foram gravados. Na Fase 2 isso inclui falhas nas horas de alguma pessoa; os erros de cada pessoa ficam em `stats.time_entries.errors` e em `clickup_connections.last_error`;
 - `failed`: nada foi gravado, ou houve erro fatal (por exemplo, 401).
+
+Formato de `stats`: `source`, `mode`, `structure` (o `to_stats()` da estrutura), `task_listing` (o `to_stats()` das tarefas mais `reconciled`, `watermark_advanced` e, quando for o caso, `deletions_skipped` e `deletions_skipped_reason`) e `errors`. Os contadores `updated` contam todo registro visto, mesmo sem mudança, porque o upsert sempre grava `synced_at`.
+
+Limitação conhecida: o passo de tarefas roda numa transação só, que fica aberta enquanto espera o HTTP e o rate limit. Um `idle_in_transaction_session_timeout` no servidor derrubaria esse passo; hoje ele não é configurado.
 
 ### Worker e fila
 
 - O worker roda em processo próprio: `scarlet-scribe-worker`.
 - O **APScheduler** cria um `sync_run` com `trigger=scheduled` e `status=pending` a cada `SYNC_INTERVAL_MINUTES`. Ele não cria um run novo se já houver um `pending` ou `running`: o conflito no índice único parcial de `sync_runs` é simplesmente ignorado.
 - Um loop consulta a fila a cada ~3 s e "pega" o run `pending` mais antigo com `SELECT ... FOR UPDATE SKIP LOCKED`, marcando-o como `running`.
-- Um **advisory lock do Postgres** (chave fixa) envolve a execução. Isso garante um único sync por vez mesmo se, por engano, subirem dois workers.
-- Ao iniciar, o worker marca como `failed` ("interrompido") os runs que ficaram em `running`, que seriam sobras de um crash.
+- Um **advisory lock do Postgres** (chave fixa, de sessão, `pg_try_advisory_lock`) envolve a execução. Ele fica numa conexão própria, separada das que gravam dados, e é liberado explicitamente; se o unlock falhar, a conexão é invalidada. Isso garante um único sync por vez mesmo se, por engano, subirem dois workers.
+- Sempre que obtém o advisory lock, o worker marca como `failed` ("interrompido") os runs que ficaram em `running`, que seriam sobras de um crash. Assim um worker vivo destrava a fila deixada por outro que morreu, sem esperar um restart.
+- Com SIGTERM ou SIGINT, o worker interrompe o run em andamento, grava-o como `failed` ("interrompido"), libera o lock e encerra.
 
 ## API HTTP
 
