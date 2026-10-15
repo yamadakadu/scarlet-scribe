@@ -17,14 +17,16 @@ export function MergeRequestsPage() {
   const { params, set, clear } = useUrlFilters()
   const repositorio = params.get('repositorio') ?? ''
   const q = params.get('q') ?? ''
-  const estado = STATES.find((s) => s.value === params.get('estado'))?.value ?? 'opened'
+  const estadoParam = params.get('estado')
+  const estado: MergeRequestState | 'todos' =
+    estadoParam === 'todos' ? 'todos' : (STATES.find((s) => s.value === estadoParam)?.value ?? 'opened')
   const pagina = Math.max(1, Number(params.get('pagina')) || 1)
 
   const repos = useRepositories(false)
   const reposArchived = useRepositories(true)
   const mrs = useMergeRequests({
     repositoryId: repositorio || undefined,
-    state: estado,
+    state: estado === 'todos' ? undefined : estado,
     q,
     limit: PAGE_SIZE,
     offset: (pagina - 1) * PAGE_SIZE,
@@ -62,6 +64,7 @@ export function MergeRequestsPage() {
                 {s.label}
               </option>
             ))}
+            <option value="todos">Todos</option>
           </select>
         </label>
         {params.size > 0 && (

@@ -57,7 +57,7 @@ export function SyncButton() {
   const prevActive = useRef(active)
   useEffect(() => {
     if (prevActive.current && !active && (run?.status === 'succeeded' || run?.status === 'partial')) {
-      for (const key of ['tasks', 'task', 'milestones', 'projects', 'people']) {
+      for (const key of ['tasks', 'task', 'milestones', 'projects', 'people', 'sources', 'repositories', 'merge-requests', 'commits']) {
         void client.invalidateQueries({ queryKey: [key] })
       }
     }

@@ -82,7 +82,7 @@ export const gitlabPaths = {
   commits: `${GITLAB.basePath}/${GITLAB_ROUTES.commits}`,
   repositories: `${GITLAB.basePath}/${GITLAB_ROUTES.repositories}`,
   mergeRequestsOfRepository: (repositoryId: string) =>
-    `${GITLAB.basePath}/${GITLAB_ROUTES.mergeRequests}?repositorio=${repositoryId}`,
+    `${GITLAB.basePath}/${GITLAB_ROUTES.mergeRequests}?repositorio=${repositoryId}&estado=todos`,
 }
 
 export function appForPath(pathname: string): AppDef | undefined {

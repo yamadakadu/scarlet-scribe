@@ -104,7 +104,7 @@ export function useRepositories(archived: boolean, limit = 200, offset = 0) {
 
 export interface MergeRequestFilters {
   repositoryId?: string
-  state: MergeRequestState
+  state?: MergeRequestState
   q?: string
   limit: number
   offset: number
@@ -120,7 +120,7 @@ export function useMergeRequests(f: MergeRequestFilters) {
           params: {
             query: {
               repository_id: f.repositoryId,
-              state: [f.state],
+              state: f.state ? [f.state] : undefined,
               q: f.q || undefined,
               limit: f.limit,
               offset: f.offset,
