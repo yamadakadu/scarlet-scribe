@@ -2,7 +2,7 @@
 """PreToolUse hook for Edit/Write/MultiEdit/NotebookEdit.
 
 Blocks (exit 2) edits outside the acting agent's area, Phase 2 work during
-Phase 1, test files, write calls in the ClickUp connector and secrets in content.
+Phase 1, test files, write calls in the connectors (ClickUp, GitLab) and secrets in content.
 The acting agent comes from the git branch of the edited file's worktree.
 """
 
@@ -12,7 +12,7 @@ from pathlib import Path
 from _common import (
     area_problems,
     block,
-    clickup_problems,
+    connector_write_problems,
     phase_problems,
     read_payload,
     repo_context,
@@ -48,7 +48,7 @@ def main() -> int:
         area_problems(ctx, rel)
         + phase_problems(rel, content)
         + tests_problems(rel, content)
-        + clickup_problems(rel, content)
+        + connector_write_problems(rel, content)
         + secret_problems(rel, content.splitlines())
     )
     return block(problems) if problems else 0

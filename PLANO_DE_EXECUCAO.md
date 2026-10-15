@@ -77,9 +77,9 @@ As regras acima são impostas por hooks. A política está em `.claude/hooks/pol
 
 | Camada | Arquivo | O que verifica |
 |---|---|---|
-| Claude Code (`PreToolUse`) | `.claude/hooks/guard_edits.py` | Edição fora da área do agente (identificado pela branch), peças da Fase 2 durante a Fase 1, arquivos de teste, chamadas de escrita no conector do ClickUp, segredos no conteúdo e arquivos internos do `.git` |
+| Claude Code (`PreToolUse`) | `.claude/hooks/guard_edits.py` | Edição fora da área do agente (identificado pela branch), peças da Fase 2 durante a Fase 1, arquivos de teste, chamadas de escrita em qualquer conector (ClickUp e GitLab), segredos no conteúdo (inclusive tokens `pk_` do ClickUp e `glpat-` do GitLab) e arquivos internos do `.git` |
 | Claude Code (`PreToolUse`) | `.claude/hooks/guard_reads.py` | Leitura de `.env` e de chaves |
-| Claude Code (`PreToolUse`) | `.claude/hooks/guard_bash.py` | **Bloqueia:** ler `.env` ou exibir variáveis de ambiente; `--no-verify` e mudanças em `core.hooksPath`; comandos git destrutivos; commit em branch fora do padrão; dependências de teste; escrita na API do ClickUp. **Pede confirmação:** push, commit ou merge na `main` e remoções recursivas. O texto literal das mensagens de commit (`-m` ou heredoc com `-F -`) não é verificado; mensagens com `$(...)`, crase ou `$VAR` continuam sendo |
+| Claude Code (`PreToolUse`) | `.claude/hooks/guard_bash.py` | **Bloqueia:** ler `.env` ou exibir variáveis de ambiente; `--no-verify` e mudanças em `core.hooksPath`; comandos git destrutivos; commit em branch fora do padrão; dependências de teste; escrita na API do ClickUp e na do GitLab (um cliente HTTP, como `curl` ou `glab`, com o caminho `/api/v4/` ou a palavra `gitlab` e um método ou corpo de escrita; o host do GitLab varia entre o gitlab.com e o self-hosted). **Pede confirmação:** push, commit ou merge na `main` e remoções recursivas. O texto literal das mensagens de commit (`-m` ou heredoc com `-F -`) não é verificado; mensagens com `$(...)`, crase ou `$VAR` continuam sendo |
 | Claude Code (`SubagentStop`) | `.claude/hooks/log_subagent.py` | Registra o fim de cada subagente em `.claude/logs/agents.log` (fora do git) |
 | git (`pre-commit`) | `.githooks/pre-commit` | Branch `<agente>/<feature>`, arquivos só da área do agente, arquivos proibidos (segredos, artefatos, arquivos locais, acima de 1 MB), segredos nas linhas adicionadas e as regras de fase, testes e ClickUp |
 | git (`commit-msg`) | `.githooks/commit-msg` | Assunto começando com `<agente>/<feature>: ` |
@@ -165,7 +165,7 @@ Decisões do Carlos (2026-10-15):
 - [x] Plano de etapas definido (tabela abaixo)
 - [x] Base multi-fonte já existente: protocolo `Connector`, `create_connector`, chave `(source, external_id)` e `sync_state` por recurso
 - [x] Documentação atualizada: este plano, `ARCHITECTURE.md` e `CLAUDE.md`
-- [ ] Hooks estendidos ao GitLab: só GET em `connectors/gitlab/`, sem escrita no host do GitLab, e `selfcheck.py` passando (Maestro, antes da FM-05)
+- [x] Hooks estendidos ao GitLab: só GET em `connectors/gitlab/`, sem escrita na API do GitLab, tokens do GitLab tratados como segredo, `gitlab_spike.py` na área do Batedor e `selfcheck.py` passando (58/58)
 - [x] FM-01: barra lateral de apps (Vitrine), integrada em a237fc1
 - [x] Decisão: usar o gitlab.com ou o self-hosted, conforme o que for disponibilizado (2026-10-15)
 - [ ] FM-02: pré-requisitos do GitLab, na instância disponível (Carlos)
@@ -237,7 +237,7 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 | FM-02 | pendente | Aguardando o Carlos |
 | FM-03 | pendente | |
 | FM-04 | pendente | |
-| FM-05 | pendente | Antes dela, o Maestro estende os hooks ao GitLab |
+| FM-05 | pendente | Os hooks já cobrem o GitLab |
 | FM-06 | pendente | |
 | FM-07 | pendente | |
 | FM-08 | pendente | |

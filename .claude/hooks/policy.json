@@ -34,7 +34,7 @@
       ".python-version",
       "src/"
     ],
-    "batedor": ["backend/scripts/clickup_spike.py"],
+    "batedor": ["backend/scripts/clickup_spike.py", "backend/scripts/gitlab_spike.py"],
     "conector": ["backend/src/scarlet_scribe/connectors/", "backend/scripts/"],
     "arquivista": [
       "backend/src/scarlet_scribe/domain/",
@@ -66,6 +66,6 @@
     "backend/src/scarlet_scribe/api/routes/time_entries.py"
   ],
   "phase2_tables": ["app_users", "sessions", "clickup_connections", "time_entries"],
-  "clickup_write_allowed_files": ["backend/src/scarlet_scribe/connectors/clickup/oauth.py"],
+  "connector_write_allowed_files": ["backend/src/scarlet_scribe/connectors/clickup/oauth.py"],
   "max_file_bytes": 1048576
 }

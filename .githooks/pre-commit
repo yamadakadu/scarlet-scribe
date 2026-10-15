@@ -4,7 +4,7 @@
 - branch: <agente>/<feature> commits may only touch that agent's area;
 - forbidden files: secrets (.env, keys), generated artifacts, local files, oversized files;
 - secrets inside the added lines;
-- project rules: no Phase 2 work in Phase 1, no tests before the MVP, read-only ClickUp connector.
+- project rules: no Phase 2 work in Phase 1, no tests before the MVP, read-only connectors (ClickUp, GitLab).
 """
 
 import subprocess
@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT / ".claude" / "hooks"))
 from _common import (  # noqa: E402
     POLICY,
     area_problems,
-    clickup_problems,
+    connector_write_problems,
     forbidden_file_problems,
     phase_problems,
     repo_context,
@@ -104,7 +104,7 @@ def main() -> int:
         text = "\n".join(content.get(new_path, []))
         problems += phase_problems(new_path, text)
         problems += tests_problems(new_path, text)
-        problems += clickup_problems(new_path, text)
+        problems += connector_write_problems(new_path, text)
         problems += secret_problems(new_path, content.get(new_path, []))
 
     if problems:

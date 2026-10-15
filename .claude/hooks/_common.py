@@ -149,7 +149,7 @@ def tests_problems(rel: str, content: str = "") -> list[str]:
     return problems
 
 
-CLICKUP_WRITE_RE = re.compile(
+CONNECTOR_WRITE_RE = re.compile(
     r"""\.(post|put|patch|delete)\s*\("""
     r"""|method\s*=\s*['"](POST|PUT|PATCH|DELETE)['"]"""
     r"""|\.(request|stream)\(\s*['"](POST|PUT|PATCH|DELETE)['"]""",
@@ -157,14 +157,15 @@ CLICKUP_WRITE_RE = re.compile(
 )
 
 
-def clickup_problems(rel: str, content: str = "") -> list[str]:
-    if "/connectors/" not in f"/{rel}" or rel in POLICY["clickup_write_allowed_files"]:
+def connector_write_problems(rel: str, content: str = "") -> list[str]:
+    """Every connector (ClickUp, GitLab, ...) is read-only: only GET calls."""
+    if "/connectors/" not in f"/{rel}" or rel in POLICY["connector_write_allowed_files"]:
         return []
-    m = CLICKUP_WRITE_RE.search(content)
+    m = CONNECTOR_WRITE_RE.search(content)
     if m:
         return [
             f"'{rel}' contém uma chamada HTTP de escrita ({m.group(0).strip()}). "
-            "O conector do ClickUp é somente leitura: use apenas GET."
+            "Os conectores (ClickUp, GitLab) são somente leitura: use apenas GET."
         ]
     return []
 
@@ -208,6 +209,7 @@ def forbidden_file_problems(rel: str, size: int | None = None) -> list[str]:
 
 SECRET_PATTERNS = [
     ("token pessoal do ClickUp", re.compile(r"\bpk_\d+_[A-Za-z0-9]{20,}")),
+    ("token do GitLab", re.compile(r"\bgl(pat|dt|ptt|rt|cbt|soat|ft|imt|oas|agent)-[A-Za-z0-9_.-]{20,}")),
     ("chave privada", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     ("chave de acesso AWS", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
     ("token do GitHub", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}")),

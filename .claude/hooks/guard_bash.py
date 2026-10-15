@@ -3,7 +3,7 @@
 
 Blocks (exit 2): reading secret files or the environment, bypassing git hooks,
 destructive git commands, commits on branches outside <agente>/<feature>, test
-dependencies, and write requests to the ClickUp API. The literal text of commit
+dependencies, and write requests to the ClickUp and GitLab APIs. The literal text of commit
 messages is not checked (see without_commit_messages).
 Asks the user (permissionDecision "ask"): push, commit/merge on the main branch,
 and recursive deletions. (`rm -rf` itself is already blocked by the user's global hook.)
@@ -22,7 +22,7 @@ PREFIXES = {"sudo", "doas", "command", "builtin", "exec", "nohup", "time", "xarg
 SECRET_FILE_RE = re.compile(r"""(^|[\s'"/=<>:])\.env(\.(?!example\b)[\w.-]+)?(?=$|[\s'";|&)>])""")
 ENV_DUMP_RE = re.compile(r"(^|[;&|]\s*)(printenv|env|set|export\s+-p)\s*($|[;&|])|/proc/[^\s]*/environ|docker\s+compose\s+config")
 TEST_DEP_RE = re.compile(r"\b(uv\s+(add|pip\s+install)|pip3?\s+install|npm\s+(i|install|add)|pnpm\s+add|yarn\s+add)\b.*\b(pytest|vitest|jest|@testing-library|hypothesis)")
-CLICKUP_WRITE_RE = re.compile(
+API_WRITE_RE = re.compile(
     r"(-X\s*|--request[\s=]+)(POST|PUT|PATCH|DELETE)\b|\s(-d|--data[\w-]*|-F|--form|--json)[\s=]"
     r"|\bhttps?\s+(POST|PUT|PATCH|DELETE)\b",
     re.IGNORECASE,
@@ -36,6 +36,10 @@ MESSAGE_ARG_RE = re.compile(r"""(\s(?:-m|--message)(?:=|\s+))("(?:[^"\\]|\\.)*"|
 HEREDOC_RE = re.compile(r"""<<-?\s*(['"]?)(\w+)\1""")
 STDIN_FILE_RE = re.compile(r"\s(-F|--file)(=|\s*)-(\s|$)")
 EXPANSION_RE = re.compile(r"\$|`")
+# The GitLab host varies (gitlab.com or self-hosted), so the API path and the glab CLI mark it.
+# An HTTP client is also required, so `git branch -d gitlab-x` or `docker compose up -d gitlab` pass.
+GITLAB_API_RE = re.compile(r"/api/v4/|\bgitlab\b|\bglab\b", re.IGNORECASE)
+HTTP_CLIENT_RE = re.compile(r"\b(curl|wget|xh|glab)\b|(^|[;&|(]\s*)https?\s")
 
 
 def without_commit_messages(command: str) -> str:
@@ -174,11 +178,13 @@ def main() -> int:
     if SECRET_FILE_RE.search(command):
         blocks.append("O comando referencia um arquivo .env. O conteúdo de segredos não pode entrar no contexto.")
     if ENV_DUMP_RE.search(command):
-        blocks.append("O comando exibe variáveis de ambiente, que podem conter o token do ClickUp.")
+        blocks.append("O comando exibe variáveis de ambiente, que podem conter os tokens do ClickUp e do GitLab.")
     if TEST_DEP_RE.search(command):
         blocks.append("Instalar dependência de teste: testes estão fora do escopo até o MVP.")
-    if "api.clickup.com" in command and CLICKUP_WRITE_RE.search(command):
+    if "api.clickup.com" in command and API_WRITE_RE.search(command):
         blocks.append("Requisição de escrita para a API do ClickUp. O projeto é somente leitura.")
+    if GITLAB_API_RE.search(command) and HTTP_CLIENT_RE.search(command) and API_WRITE_RE.search(command):
+        blocks.append("Requisição de escrita para a API do GitLab. O projeto é somente leitura.")
 
     for argv in split_commands(command):
         argv = strip_prefixes(argv)
