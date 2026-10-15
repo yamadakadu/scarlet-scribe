@@ -8,13 +8,41 @@
    exclusões se a listagem de tarefas **e** a estrutura do mesmo run vieram
    completas.
 
+Depois dos passos do ClickUp, no mesmo run (e sob o mesmo advisory lock, que o
+worker segura), rodam os passos das fontes de código (Fase M), só se
+`settings.gitlab_enabled`:
+
+G1. **Repositórios:** sempre a listagem completa; `deleted_at` só com
+    `report.allows_deletions`. Os arquivados ficam com `archived=true`.
+G2. **Merge requests, por repositório não arquivado:** reconciliação completa
+    (`full`) na primeira vez e a cada `SYNC_FULL_RECONCILE_HOURS`, que marca
+    `deleted_at` nos MRs do repositório que não voltaram; incremental no resto
+    do tempo. Autores em `people` com a `source` da fonte.
+G3. **Commits, por repositório não arquivado e não vazio:** desde o watermark
+    (máximo de `committed_at`) menos 5 min; na primeira vez, só a janela de
+    `INITIAL_COMMITS_WINDOW`. Commits nunca ganham `deleted_at`.
+
+Um 403/404 na listagem de MRs ou commits de um repositório é "recurso
+indisponível": não deixa o run parcial e não avança o watermark. O watermark de
+MRs e commits nunca passa do início da listagem (datas no futuro na origem).
+
+Cada fonte tem o próprio desfecho: uma fonte que falha (inclusive com 401)
+deixa o run `partial`, sem desfazer o que a outra gravou; o run só termina
+`failed` se todas as fontes falharam. Uma fonte não configurada (ClickUp sem token
+ou sem team; GitLab sem `gitlab_enabled`) é pulada: fica fora do desfecho e
+aparece em `stats` como `{source, skipped: true, reason}`. Sem nenhuma fonte
+configurada, o run termina `failed` ("nenhuma fonte configurada"). Os contadores
+do ClickUp ficam no nível de cima de `stats`, como antes; os do GitLab, em
+`stats.gitlab`.
+
 Cada passo grava numa transação própria (uma falha num passo não desfaz os
 anteriores) e, na mesma transação, atualiza `sync_runs.stats`, para a UI ver o
 progresso. Quem marca o run como `running` é o worker; este serviço só executa
 e grava o status final.
 
-O conector vem de `create_connector(settings)` ou de uma fábrica passada por
-parâmetro (útil para exercitar o serviço com um conector falso). Mensagens de
+O conector do ClickUp vem de `create_connector(settings)` ou de uma fábrica
+passada por parâmetro (útil para exercitar o serviço com um conector falso); o
+do GitLab, só de `create_code_connector(settings)`. Mensagens de
 erro e logs nunca levam credenciais nem conteúdo de tarefas: de um
 `ConnectorError` usamos a mensagem (o contrato garante que ela não traz
 credenciais); de qualquer outra exceção, só o tipo.
@@ -38,17 +66,27 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from scarlet_scribe.config import Settings
 from scarlet_scribe.connectors.base import (
+    CodeConnector,
     Connector,
     ConnectorAuthError,
     ConnectorConfigError,
     ConnectorError,
     ListingReport,
+    RepositorySnapshot,
     StructureSnapshot,
 )
-from scarlet_scribe.connectors.factory import create_connector
+from scarlet_scribe.connectors.factory import (
+    CODE_SOURCE,
+    DEFAULT_SOURCE,
+    create_code_connector,
+    create_connector,
+)
 from scarlet_scribe.db.models import (
+    CommitRow,
     ContainerRow,
+    MergeRequestRow,
     PersonRow,
+    RepositoryRow,
     SyncRunRow,
     SyncStateRow,
     TaskRow,
@@ -56,7 +94,7 @@ from scarlet_scribe.db.models import (
     task_assignees,
 )
 from scarlet_scribe.db.session import get_sessionmaker
-from scarlet_scribe.domain.models import Person, Task
+from scarlet_scribe.domain.models import MergeRequest, Person, Repository, Task
 from scarlet_scribe.domain.sync import SyncStatus
 
 logger = logging.getLogger(__name__)
@@ -73,6 +111,14 @@ ERROR_MAX_LEN = 300
 # Erro gravado num run que não terminou (cancelado no encerramento do worker ou
 # deixado em `running` por um crash).
 INTERRUPTED_ERROR = "interrompido"
+
+# Fontes de código (Fase M). Primeira busca de commits de um repositório: só esta
+# janela, para não bater no teto de páginas do conector em repositórios grandes.
+# É uma constante de propósito, não uma variável de ambiente.
+INITIAL_COMMITS_WINDOW = timedelta(days=365)
+# 403 (MRs desativados, sem permissão) ou 404 (repositório vazio) na listagem de
+# MRs ou de commits de um repositório: "recurso indisponível", não um erro.
+UNAVAILABLE_STATUS_CODES = frozenset({403, 404})
 
 _TEXT_ARRAY = ARRAY(Text)
 _UUID_ARRAY = ARRAY(Uuid())
@@ -97,8 +143,89 @@ class _Counter:
 
 
 @dataclass
+class _CodeSourceState:
+    """O que uma fonte de código (GitLab) acumula num run; vai para `stats.<source>`.
+
+    O desfecho é da fonte: `failed` (erro fatal ou nada gravado), `partial` ou
+    `succeeded`. Quem combina os desfechos das fontes é o `_RunState`.
+    """
+
+    source: str
+    counters: dict[str, _Counter] = field(
+        default_factory=lambda: {
+            name: _Counter() for name in ("repositories", "merge_requests", "commits", "people")
+        }
+    )
+    repository_listing: dict[str, Any] | None = None
+    # Um relatório por repositório, pelo `external_id` do repositório.
+    merge_request_listings: dict[str, dict[str, Any]] = field(default_factory=dict)
+    commit_listings: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Repositórios sem busca de MRs e commits (arquivados) ou só de commits (vazios).
+    skipped: dict[str, int] = field(default_factory=lambda: {"archived": 0, "empty": 0})
+    unavailable: list[dict[str, Any]] = field(default_factory=list)
+    errors: list[dict[str, str]] = field(default_factory=list)
+    wrote: bool = False
+    partial: bool = False
+    fatal: str | None = None
+
+    @property
+    def failed(self) -> bool:
+        return self.fatal is not None or not self.wrote
+
+    def status(self) -> SyncStatus:
+        if self.failed:
+            return SyncStatus.FAILED
+        return SyncStatus.PARTIAL if self.partial else SyncStatus.SUCCEEDED
+
+    def stats(self, *, final: bool = False) -> dict[str, Any]:
+        data: dict[str, Any] = {"source": self.source}
+        if final:
+            data["status"] = self.status().value
+        data.update({name: counter.to_dict() for name, counter in self.counters.items()})
+        if self.repository_listing is not None:
+            data["repository_listing"] = self.repository_listing
+        data["merge_request_listings"] = dict(self.merge_request_listings)
+        data["commit_listings"] = dict(self.commit_listings)
+        data["skipped_repositories"] = dict(self.skipped)
+        data["unavailable"] = {
+            kind: sum(1 for item in self.unavailable if item["resource"] == kind)
+            for kind in ("merge_requests", "commits")
+        } | {"details": list(self.unavailable)}
+        if self.errors:
+            data["errors"] = list(self.errors)
+        if self.fatal is not None:
+            data["error"] = self.fatal
+        return data
+
+    def fail(self, step: str, exc: BaseException) -> None:
+        self.fatal = _short(f"{step}: {_describe(exc)}")
+        _log_exception(f"{self.source}: passo {step}: erro fatal", exc)
+
+    def step_error(self, step: str, exc: BaseException) -> None:
+        self.partial = True
+        self.errors.append({"step": step, "error": _short(_describe(exc))})
+        _log_exception(f"{self.source}: passo {step}: erro, o passo foi desfeito", exc)
+
+    def note_unavailable(self, resource: str, repository_id: str, report: ListingReport) -> None:
+        status_codes = sorted({issue.status_code for issue in report.errors if issue.status_code})
+        self.unavailable.append(
+            {"resource": resource, "repository": repository_id, "status_codes": status_codes}
+        )
+        logger.warning(
+            "%s: %s do repositório %s indisponíveis (HTTP %s); watermark mantido",
+            self.source, resource, repository_id, "/".join(map(str, status_codes)),
+        )
+
+
+@dataclass
 class _RunState:
-    """O que um run acumula: contadores, relatórios e o desfecho."""
+    """O que um run acumula: contadores, relatórios e o desfecho.
+
+    Os campos do nível de cima são os do ClickUp (formato de `stats` anterior à
+    Fase M). `code` guarda o estado da fonte de código, quando configurada. Uma
+    fonte não configurada é pulada (`clickup_skipped`, `code_skipped`) e fica
+    fora do desfecho do run.
+    """
 
     counters: dict[str, _Counter] = field(
         default_factory=lambda: {
@@ -109,13 +236,26 @@ class _RunState:
     errors: list[dict[str, str]] = field(default_factory=list)
     wrote: bool = False  # algum passo gravou (commit) dados
     partial: bool = False  # algum passo ficou parcial ou falhou sem ser fatal
-    fatal: str | None = None  # erro fatal: o run termina `failed`
+    fatal: str | None = None  # erro fatal do ClickUp: a fonte falhou
+    clickup_skipped: str | None = None  # motivo de o ClickUp não ter rodado
+    code: _CodeSourceState | None = None
+    code_skipped: str | None = None  # motivo de a fonte de código não ter rodado
 
-    def stats(self) -> dict[str, Any]:
-        data: dict[str, Any] = dict(self.extra)
-        data.update({name: counter.to_dict() for name, counter in self.counters.items()})
-        if self.errors:
-            data["errors"] = list(self.errors)
+    def stats(self, *, final: bool = False) -> dict[str, Any]:
+        if self.clickup_skipped is not None:
+            # No lugar dos passos do ClickUp (que ficam no nível de cima).
+            data: dict[str, Any] = {
+                "source": DEFAULT_SOURCE, "skipped": True, "reason": self.clickup_skipped
+            }
+        else:
+            data = dict(self.extra)
+            data.update({name: counter.to_dict() for name, counter in self.counters.items()})
+            if self.errors:
+                data["errors"] = list(self.errors)
+        if self.code is not None:
+            data[self.code.source] = self.code.stats(final=final)
+        elif self.code_skipped is not None:
+            data[CODE_SOURCE] = {"source": CODE_SOURCE, "skipped": True, "reason": self.code_skipped}
         return data
 
     def fail(self, step: str, exc: BaseException) -> None:
@@ -127,10 +267,46 @@ class _RunState:
         self.errors.append({"step": step, "error": _short(_describe(exc))})
         _log_exception(f"passo {step}: erro, o passo foi desfeito", exc)
 
+    @property
+    def clickup_failed(self) -> bool:
+        return self.fatal is not None or not self.wrote
+
+    def _outcomes(self) -> list[tuple[bool, bool]]:
+        """`(falhou, parcial)` de cada fonte que rodou (as puladas ficam de fora)."""
+        outcomes = []
+        if self.clickup_skipped is None:
+            outcomes.append((self.clickup_failed, self.partial))
+        if self.code is not None:
+            outcomes.append((self.code.failed, self.code.partial))
+        return outcomes
+
     def final_status(self) -> SyncStatus:
-        if self.fatal is not None or not self.wrote:
+        """`failed` se todas as fontes que rodaram falharam, ou se nenhuma rodou
+        (nada configurado: nada foi sincronizado); `partial` se alguma falhou ou
+        ficou parcial. Só com o ClickUp, é a regra anterior à Fase M."""
+        outcomes = self._outcomes()
+        failed = sum(1 for source_failed, _ in outcomes if source_failed)
+        if failed == len(outcomes):  # inclusive sem nenhuma fonte
             return SyncStatus.FAILED
-        return SyncStatus.PARTIAL if self.partial else SyncStatus.SUCCEEDED
+        if failed or any(source_partial for _, source_partial in outcomes):
+            return SyncStatus.PARTIAL
+        return SyncStatus.SUCCEEDED
+
+    def final_error(self, status: SyncStatus) -> str | None:
+        """`sync_runs.error`: o erro de cada fonte que falhou. Só com o ClickUp, o
+        texto é o de antes da Fase M (sem prefixo, e só em run `failed`)."""
+        if self.clickup_skipped is None and self.code is None:
+            if status is SyncStatus.FAILED:
+                return self.fatal or "nenhum dado foi gravado"
+            return None
+        if not self._outcomes():
+            return "nenhuma fonte configurada"
+        messages = []
+        if self.clickup_skipped is None and self.clickup_failed:
+            messages.append(f"clickup: {self.fatal or 'nenhum dado foi gravado'}")
+        if self.code.failed:
+            messages.append(f"{self.code.source}: {self.code.fatal or 'nenhum dado foi gravado'}")
+        return "; ".join(messages) or None
 
 
 # --- Serviço ------------------------------------------------------------------
@@ -140,7 +316,8 @@ class SyncService:
     """Executa um run de sync que o worker já marcou como `running`.
 
     - `connector_factory`: devolve um `Connector` novo (ainda não aberto). O
-      padrão é `create_connector(settings)`.
+      padrão é `create_connector(settings)`; sem fábrica própria, o ClickUp só
+      roda se o token e o team estiverem configurados (senão, é pulado).
     - `sessionmaker`: o padrão é o do processo (`db/session.py`).
     """
 
@@ -154,30 +331,52 @@ class SyncService:
         self._settings = settings
         self._sessionmaker = sessionmaker or get_sessionmaker()
         self._connector_factory = connector_factory or partial(create_connector, settings)
+        self._clickup_enabled = connector_factory is not None or bool(
+            settings.clickup_api_token and settings.clickup_team_id
+        )
 
     async def execute(self, run_id: uuid.UUID) -> SyncStatus:
-        """Roda os passos 1 a 3 e grava o status final do run. Devolve o status."""
+        """Roda os passos do ClickUp (1 a 3) e, se configurado, os do GitLab, e
+        grava o status final do run. Devolve o status."""
         state = _RunState()
         try:
-            await self._run_with_connector(run_id, state)
+            if self._clickup_enabled:
+                try:
+                    await self._run_with_connector(run_id, state)
+                except Exception as exc:  # erro inesperado fora dos passos (por exemplo, no banco)
+                    state.fail("sync", exc)
+            else:
+                state.clickup_skipped = "não configurado"
+                logger.info("%s não configurado: passos pulados", DEFAULT_SOURCE)
+            # Uma falha do ClickUp não impede o GitLab, e vice-versa.
+            await self._run_code_source(run_id, state)
         except asyncio.CancelledError:
             # Encerramento do worker no meio do run: registra e repassa o cancelamento.
             logger.warning("run %s cancelado no meio da execução", run_id)
             await self._finish(run_id, SyncStatus.FAILED, state.stats(), INTERRUPTED_ERROR)
             raise
-        except Exception as exc:  # erro inesperado fora dos passos (por exemplo, no banco)
-            state.fail("sync", exc)
 
         status = state.final_status()
-        error = None
-        if status is SyncStatus.FAILED:
-            error = state.fatal or "nenhum dado foi gravado"
-        await self._finish(run_id, status, state.stats(), error)
+        error = state.final_error(status)
+        await self._finish(run_id, status, state.stats(final=True), error)
         tasks = state.counters["tasks"]
         logger.info(
-            "run %s terminou: %s (tarefas: %d criadas, %d atualizadas, %d removidas)",
+            "run %s terminou: %s (tarefas: %d criadas, %d atualizadas, %d removidas)%s",
             run_id, status.value, tasks.created, tasks.updated, tasks.deleted,
+            f"; erro: {error}" if error else "",
         )
+        if state.code is not None:
+            code = state.code
+            repos, mrs, commits = (
+                code.counters[name] for name in ("repositories", "merge_requests", "commits")
+            )
+            logger.info(
+                "run %s, %s: %s (repositórios: %d vistos, %d removidos; merge requests: %d "
+                "criados, %d atualizados, %d removidos; commits: %d criados, %d atualizados)",
+                run_id, code.source, code.status().value, repos.created + repos.updated,
+                repos.deleted, mrs.created, mrs.updated, mrs.deleted, commits.created,
+                commits.updated,
+            )
         return status
 
     # --- Orquestração ---------------------------------------------------------
@@ -405,6 +604,356 @@ class SyncService:
         async with self._sessionmaker() as session:
             return await session.get(SyncStateRow, (source, TASKS_RESOURCE))
 
+    # --- Fase M: fonte de código (GitLab) ---------------------------------------
+
+    async def _run_code_source(self, run_id: uuid.UUID, state: _RunState) -> None:
+        """Passos G1 a G3, só com `settings.gitlab_enabled`. Nenhum erro sai daqui
+        (exceto o cancelamento): eles ficam no desfecho da fonte, em `state.code`."""
+        if not self._settings.gitlab_enabled:
+            state.code_skipped = "não configurado"
+            logger.info("%s não configurado: passos pulados", CODE_SOURCE)
+            return
+        code = state.code = _CodeSourceState(source=CODE_SOURCE)
+        try:
+            connector = create_code_connector(self._settings)
+        except ConnectorError as exc:
+            code.fail("conector", exc)
+            return
+        try:
+            async with connector:
+                await self._run_code_steps(run_id, connector, code, state)
+        except ConnectorError as exc:  # ao abrir ou fechar o conector
+            if code.fatal is None:
+                code.fail("conector", exc)
+        except Exception as exc:  # erro inesperado fora dos passos
+            if code.fatal is None:
+                code.fail("sync", exc)
+
+    async def _run_code_steps(
+        self, run_id: uuid.UUID, connector: CodeConnector, code: _CodeSourceState, state: _RunState
+    ) -> None:
+        source = code.source = connector.source
+
+        # G1: repositórios. Sem eles não há onde pendurar MRs e commits: erro é fatal.
+        try:
+            snapshot = await connector.fetch_repositories()
+        except ConnectorError as exc:
+            code.fail("repositórios", exc)
+            return
+        try:
+            repository_ids = await self._step_repositories(run_id, source, snapshot, code, state)
+        except Exception as exc:
+            code.fail("repositórios", exc)
+            return
+        code.wrote = True
+
+        sync_states = await self._load_code_states(source)
+        # Autores já gravados (com commit) neste run: external_id → people.id.
+        person_ids: dict[str, uuid.UUID] = {}
+        for repo in _dedupe(snapshot.repositories):
+            if repo.archived:
+                code.skipped["archived"] += 1
+                continue
+
+            # G2: merge requests do repositório.
+            resource = f"{source}:merge_requests:{repo.external_id}"
+            try:
+                await self._step_merge_requests(
+                    run_id, connector, source, repo, repository_ids, sync_states.get(resource),
+                    person_ids, code, state,
+                )
+            except (ConnectorAuthError, ConnectorConfigError) as exc:
+                code.fail("merge requests", exc)
+                return
+            except Exception as exc:
+                code.step_error(f"merge requests do repositório {repo.external_id}", exc)
+
+            # G3: commits do repositório (um repositório vazio não tem branch padrão).
+            if repo.default_branch is None:
+                code.skipped["empty"] += 1
+                continue
+            resource = f"{source}:commits:{repo.external_id}"
+            try:
+                await self._step_commits(
+                    run_id, connector, source, repo, repository_ids, sync_states.get(resource),
+                    code, state,
+                )
+            except (ConnectorAuthError, ConnectorConfigError) as exc:
+                code.fail("commits", exc)
+                return
+            except Exception as exc:
+                code.step_error(f"commits do repositório {repo.external_id}", exc)
+
+    async def _step_repositories(
+        self,
+        run_id: uuid.UUID,
+        source: str,
+        snapshot: RepositorySnapshot,
+        code: _CodeSourceState,
+        state: _RunState,
+    ) -> dict[str, uuid.UUID]:
+        """Upsert de todos os repositórios; exclusões só com `allows_deletions`.
+        Devolve o mapa `external_id → repositories.id`."""
+        report = snapshot.report
+        repositories = _dedupe(snapshot.repositories)
+        counter = code.counters["repositories"]
+
+        async with self._sessionmaker() as session, session.begin():
+            rows = await _upsert(
+                session,
+                RepositoryRow,
+                [_repository_values(repo) for repo in repositories],
+                update_columns=(*_REPOSITORY_COLUMNS, "raw"),
+            )
+            counter.add_upserted(rows)
+
+            listing_stats: dict[str, Any] = report.to_stats()
+            if report.allows_deletions:
+                # Os descartados por dados inválidos existem na origem: contam como vistos.
+                seen = {repo.external_id for repo in repositories} | report.discarded_ids
+                counter.deleted = await _mark_deleted(session, "repositories", source, seen)
+            else:
+                listing_stats["deletions_skipped"] = True
+                listing_stats["deletions_skipped_reason"] = "listagem de repositórios parcial"
+            code.repository_listing = listing_stats
+            await _save_progress(session, run_id, state)
+
+        if not report.complete:
+            code.partial = True
+            logger.warning("%s: repositórios parciais; nenhuma exclusão de repositórios", source)
+        logger.info(
+            "%s: %d repositório(s) gravado(s), %d removido(s)", source, len(rows), counter.deleted
+        )
+        return {row.external_id: row.id for row in rows}
+
+    async def _step_merge_requests(
+        self,
+        run_id: uuid.UUID,
+        connector: CodeConnector,
+        source: str,
+        repo: Repository,
+        repository_ids: dict[str, uuid.UUID],
+        sync_state: SyncStateRow | None,
+        person_ids: dict[str, uuid.UUID],
+        code: _CodeSourceState,
+        state: _RunState,
+    ) -> None:
+        """MRs de um repositório: reconciliação completa (que marca exclusões) ou
+        incremental, no padrão das tarefas, com watermark próprio do repositório."""
+        resource = f"{source}:merge_requests:{repo.external_id}"
+        watermark = sync_state.watermark if sync_state else None
+        reconcile = self._code_reconcile_due(sync_state)
+        updated_since: datetime | None = None
+        if not reconcile:
+            # Sem watermark (nenhum MR visto ainda), a base é o início da última
+            # reconciliação completa: o que mudou depois dela ainda não foi visto.
+            base = watermark or sync_state.last_full_sync_at  # type: ignore[union-attr]
+            updated_since = base - INCREMENTAL_OVERLAP  # type: ignore[operator]
+
+        listing_started_at = datetime.now(UTC)
+        listing = connector.iter_merge_requests(repo.external_id, updated_since=updated_since)
+        counter = code.counters["merge_requests"]
+        seen: set[str] = set()
+        max_updated: datetime | None = None
+        # Autores gravados nesta transação; só entram em `person_ids` depois do commit.
+        new_people: dict[str, uuid.UUID] = {}
+
+        async with self._sessionmaker() as session, session.begin():
+            async for batch in listing:
+                mrs = _dedupe(batch)
+                if not mrs:
+                    continue
+                for mr in mrs:
+                    seen.add(mr.external_id)
+                    if mr.source_updated_at and (max_updated is None or mr.source_updated_at > max_updated):
+                        max_updated = mr.source_updated_at
+                authors = await _upsert_authors(session, source, mrs, person_ids, new_people, code)
+                rows = await _upsert(
+                    session,
+                    MergeRequestRow,
+                    [
+                        _record(
+                            mr,
+                            repository_id=repository_ids[mr.external_repository_id],
+                            author_id=authors.get(mr.external_author_id) if mr.external_author_id else None,
+                            **{column: getattr(mr, column) for column in _MERGE_REQUEST_COLUMNS},
+                        )
+                        for mr in mrs
+                    ],
+                    update_columns=(*_MERGE_REQUEST_COLUMNS, "repository_id", "author_id", "raw"),
+                )
+                counter.add_upserted(rows)
+
+            report = listing.report
+            listing_stats: dict[str, Any] = report.to_stats()
+            unavailable = _resource_unavailable(report)
+            reconciled = advanced = False
+            if unavailable:
+                code.note_unavailable("merge_requests", repo.external_id, report)
+                listing_stats["unavailable"] = True
+            else:
+                if reconcile or report.is_full:
+                    skip_reason = _code_deletions_blocker(
+                        report, requested_full=reconcile, what="merge requests"
+                    )
+                    if skip_reason is None:
+                        counter.deleted += await _mark_deleted_merge_requests(
+                            session, source, repository_ids[repo.external_id],
+                            seen | report.discarded_ids,
+                        )
+                        reconciled = True
+                    else:
+                        listing_stats["deletions_skipped"] = True
+                        listing_stats["deletions_skipped_reason"] = skip_reason
+
+                # O watermark só avança com a listagem completa; nunca anda para
+                # trás nem passa do início da listagem (data no futuro na origem).
+                if max_updated is not None and max_updated > listing_started_at:
+                    listing_stats["future_dated_merge_requests"] = True
+                    logger.warning(
+                        "%s: MRs do repositório %s com data no futuro; watermark limitado "
+                        "ao início da listagem", source, repo.external_id,
+                    )
+                    max_updated = listing_started_at
+                new_watermark = watermark
+                if report.complete and max_updated is not None:
+                    new_watermark = max(watermark, max_updated) if watermark else max_updated
+                last_full_sync_at = listing_started_at if reconciled else None
+                if report.complete and (new_watermark != watermark or last_full_sync_at is not None):
+                    await _save_state(
+                        session, source, new_watermark, last_full_sync_at, resource=resource
+                    )
+                advanced = report.complete and new_watermark != watermark
+            listing_stats["watermark_advanced"] = advanced
+            listing_stats["reconciled"] = reconciled
+            code.merge_request_listings[repo.external_id] = listing_stats
+            await _save_progress(session, run_id, state)
+
+        person_ids.update(new_people)
+        if not unavailable and not report.complete:
+            code.partial = True
+            logger.warning(
+                "%s: MRs do repositório %s parciais (%d erro(s)); watermark mantido",
+                source, repo.external_id, len(report.errors),
+            )
+        logger.info(
+            "%s: repositório %s, MRs em modo %s: %d recebido(s)%s",
+            source, repo.external_id, report.mode.value, len(seen),
+            " (reconciliado)" if reconciled else "",
+        )
+
+    async def _step_commits(
+        self,
+        run_id: uuid.UUID,
+        connector: CodeConnector,
+        source: str,
+        repo: Repository,
+        repository_ids: dict[str, uuid.UUID],
+        sync_state: SyncStateRow | None,
+        code: _CodeSourceState,
+        state: _RunState,
+    ) -> None:
+        """Commits de um repositório desde o watermark (máximo de `committed_at`,
+        porque o `since` do GitLab filtra pela data do committer) menos a margem;
+        na primeira vez, só `INITIAL_COMMITS_WINDOW`. Nunca marca exclusões."""
+        resource = f"{source}:commits:{repo.external_id}"
+        watermark = sync_state.watermark if sync_state else None
+        initial = watermark is None
+        if watermark is None:
+            since = datetime.now(UTC) - INITIAL_COMMITS_WINDOW
+        else:
+            since = watermark - INCREMENTAL_OVERLAP
+
+        # Teto do watermark: um `committed_at` no futuro (relógio errado do
+        # committer) levaria o watermark adiante e congelaria o repositório.
+        listing_started_at = datetime.now(UTC)
+        listing = connector.iter_commits(repo.external_id, since=since)
+        counter = code.counters["commits"]
+        received = 0
+        max_committed: datetime | None = None
+
+        async with self._sessionmaker() as session, session.begin():
+            async for batch in listing:
+                commits = _dedupe(batch)
+                if not commits:
+                    continue
+                received += len(commits)
+                for commit in commits:
+                    if commit.committed_at and (max_committed is None or commit.committed_at > max_committed):
+                        max_committed = commit.committed_at
+                # Um sha já gravado só atualiza (ON CONFLICT na mesma chave
+                # `<projeto>:<sha>`, única junto com `(repository_id, sha)`).
+                rows = await _upsert(
+                    session,
+                    CommitRow,
+                    [
+                        _record(
+                            commit,
+                            repository_id=repository_ids[commit.external_repository_id],
+                            **{column: getattr(commit, column) for column in _COMMIT_COLUMNS},
+                        )
+                        for commit in commits
+                    ],
+                    update_columns=(*_COMMIT_COLUMNS, "repository_id", "raw"),
+                )
+                counter.add_upserted(rows)
+
+            report = listing.report
+            listing_stats: dict[str, Any] = report.to_stats()
+            listing_stats["since"] = since.isoformat()
+            listing_stats["initial_window"] = initial
+            unavailable = _resource_unavailable(report)
+            advanced = False
+            if unavailable:
+                code.note_unavailable("commits", repo.external_id, report)
+                listing_stats["unavailable"] = True
+            else:
+                if max_committed is not None and max_committed > listing_started_at:
+                    listing_stats["future_dated_commits"] = True
+                    logger.warning(
+                        "%s: commits do repositório %s com data no futuro; watermark limitado "
+                        "ao início da listagem", source, repo.external_id,
+                    )
+                    max_committed = listing_started_at
+                new_watermark = watermark
+                if report.complete and max_committed is not None:
+                    new_watermark = max(watermark, max_committed) if watermark else max_committed
+                if report.complete and new_watermark != watermark:
+                    await _save_state(session, source, new_watermark, None, resource=resource)
+                    advanced = True
+            listing_stats["watermark_advanced"] = advanced
+            code.commit_listings[repo.external_id] = listing_stats
+            await _save_progress(session, run_id, state)
+
+        if not unavailable and not report.complete:
+            code.partial = True
+            logger.warning(
+                "%s: commits do repositório %s parciais (%d erro(s)); watermark mantido",
+                source, repo.external_id, len(report.errors),
+            )
+        logger.info(
+            "%s: repositório %s, commits desde %s: %d recebido(s)",
+            source, repo.external_id, since.isoformat(), received,
+        )
+
+    def _code_reconcile_due(self, sync_state: SyncStateRow | None) -> bool:
+        """Reconciliação completa dos MRs de um repositório: na primeira vez e a
+        cada `SYNC_FULL_RECONCILE_HOURS`. Diferente das tarefas, não exige
+        watermark: um repositório sem MRs fica no incremental desde a última
+        reconciliação."""
+        if sync_state is None or sync_state.last_full_sync_at is None:
+            return True
+        interval = timedelta(hours=self._settings.sync_full_reconcile_hours)
+        return datetime.now(UTC) - sync_state.last_full_sync_at >= interval
+
+    async def _load_code_states(self, source: str) -> dict[str, SyncStateRow]:
+        """Todos os watermarks da fonte, por `resource`, numa consulta só."""
+        async with self._sessionmaker() as session:
+            rows = (
+                await session.execute(select(SyncStateRow).where(SyncStateRow.source == source))
+            ).scalars().all()
+        return {row.resource: row for row in rows}
+
     # --- Fim do run -------------------------------------------------------------
 
     async def _finish(
@@ -442,6 +991,34 @@ def _task_deletions_blocker(
     return None
 
 
+def _code_deletions_blocker(report: ListingReport, *, requested_full: bool, what: str) -> str | None:
+    """Motivo para **não** marcar exclusões numa listagem por repositório, ou None.
+
+    Mesma regra das tarefas, sem a condição da estrutura: a listagem de um
+    repositório só depende dele. O modo do report precisa ser o pedido.
+    """
+    if report.is_full != requested_full:
+        logger.warning(
+            "%s: modo do report (%s) diferente do pedido; exclusões não marcadas",
+            what, report.mode.value,
+        )
+        return "modo da listagem diferente do pedido"
+    if not report.allows_deletions:
+        return f"listagem de {what} parcial"
+    return None
+
+
+def _resource_unavailable(report: ListingReport) -> bool:
+    """403 ou 404 na listagem de um repositório (MRs desativados, repositório vazio):
+    só erros com esses status, nada recebido e nada descartado. Um erro desses
+    depois de alguma página recebida conta como listagem parcial."""
+    if not report.errors or report.discarded:
+        return False
+    if any(issue.status_code not in UNAVAILABLE_STATUS_CODES for issue in report.errors):
+        return False
+    return all(part.received == 0 for part in report.parts.values())
+
+
 # --- SQL ----------------------------------------------------------------------
 
 _TASK_UPDATE_COLUMNS = (
@@ -469,6 +1046,45 @@ def _record(record: Any, **columns: Any) -> dict[str, Any]:
 
 def _task_values(task: Task) -> dict[str, Any]:
     return _record(task, **{column: getattr(task, column) for column in _TASK_UPDATE_COLUMNS if column != "raw"})
+
+
+# Colunas copiadas do modelo canônico (além de source, external_id e raw).
+_REPOSITORY_COLUMNS = (
+    "name",
+    "path_with_namespace",
+    "web_url",
+    "default_branch",
+    "archived",
+    "last_activity_at",
+)
+_MERGE_REQUEST_COLUMNS = (
+    "iid",
+    "title",
+    "state",
+    "draft",
+    "source_branch",
+    "target_branch",
+    "web_url",
+    "external_author_id",
+    "created_at_source",
+    "merged_at",
+    "closed_at",
+    "source_updated_at",
+)
+_COMMIT_COLUMNS = (
+    "sha",
+    "short_sha",
+    "title",
+    "author_name",
+    "author_email",
+    "authored_at",
+    "committed_at",
+    "web_url",
+)
+
+
+def _repository_values(repo: Repository) -> dict[str, Any]:
+    return _record(repo, **{column: getattr(repo, column) for column in _REPOSITORY_COLUMNS})
 
 
 def _dedupe[R](records: Iterable[R]) -> list[R]:
@@ -560,6 +1176,52 @@ async def _replace_assignees(
     return created
 
 
+async def _upsert_authors(
+    session: AsyncSession,
+    source: str,
+    mrs: Sequence[MergeRequest],
+    person_ids: dict[str, uuid.UUID],
+    new_people: dict[str, uuid.UUID],
+    code: _CodeSourceState,
+) -> dict[str, uuid.UUID]:
+    """Grava os autores dos MRs em `people` (upsert: na fonte de código não há
+    outra listagem de pessoas, então os dados do MR são os mais novos) e devolve
+    o mapa `external_author_id → people.id` dos MRs do lote.
+
+    Cada autor é gravado uma vez por run: `person_ids` tem os já gravados (com
+    commit) e `new_people`, os desta transação, que o chamador junta a
+    `person_ids` depois do commit. Um `external_author_id` sem `author` é
+    resolvido pelo que já está no banco.
+    """
+    known = {**person_ids, **new_people}
+    authors: dict[str, Person] = {}
+    for mr in mrs:
+        if mr.author is not None and mr.author.external_id not in known:
+            authors[mr.author.external_id] = mr.author
+    if authors:
+        rows = await _upsert(
+            session,
+            PersonRow,
+            [_record(p, username=p.username, email=p.email) for p in authors.values()],
+            update_columns=("username", "email", "raw"),
+        )
+        code.counters["people"].add_upserted(rows)
+        for row in rows:
+            new_people[row.external_id] = known[row.external_id] = row.id
+
+    missing = {
+        mr.external_author_id for mr in mrs if mr.external_author_id and mr.external_author_id not in known
+    }
+    if missing:
+        lookup = select(PersonRow.external_id, PersonRow.id).where(
+            PersonRow.source == source,
+            PersonRow.external_id == func.any(bindparam("ids", sorted(missing), type_=_TEXT_ARRAY)),
+        )
+        for row in (await session.execute(lookup)).all():
+            new_people[row.external_id] = known[row.external_id] = row.id
+    return known
+
+
 # Resolve parent_id a partir de external_parent_id num UPDATE ... FROM único. O
 # LEFT JOIN zera o parent_id quando o pai mudou para um que não está no banco
 # ou quando external_parent_id ficou nulo.
@@ -615,8 +1277,17 @@ _MARK_DELETED = {
         WHERE source = :source AND deleted_at IS NULL AND NOT (external_id = ANY(:seen))
         """
     ).bindparams(bindparam("seen", type_=_TEXT_ARRAY))
-    for table in ("containers", "tasks")
+    for table in ("containers", "tasks", "repositories")
 }
+
+# Os MRs são reconciliados por repositório: só os daquele repositório podem ser marcados.
+_MARK_DELETED_MERGE_REQUESTS = text(
+    """
+    UPDATE merge_requests SET deleted_at = now()
+    WHERE source = :source AND repository_id = :repository_id AND deleted_at IS NULL
+      AND NOT (external_id = ANY(:seen))
+    """
+).bindparams(bindparam("seen", type_=_TEXT_ARRAY), bindparam("repository_id", type_=Uuid()))
 
 
 async def _mark_deleted(session: AsyncSession, table: str, source: str, seen: set[str]) -> int:
@@ -625,15 +1296,31 @@ async def _mark_deleted(session: AsyncSession, table: str, source: str, seen: se
     return result.rowcount or 0
 
 
+async def _mark_deleted_merge_requests(
+    session: AsyncSession, source: str, repository_id: uuid.UUID, seen: set[str]
+) -> int:
+    """Soft delete dos MRs do repositório que não estão em `seen`. Devolve quantos."""
+    result = await session.execute(
+        _MARK_DELETED_MERGE_REQUESTS,
+        {"source": source, "repository_id": repository_id, "seen": sorted(seen)},
+    )
+    return result.rowcount or 0
+
+
 async def _save_state(
-    session: AsyncSession, source: str, watermark: datetime | None, last_full_sync_at: datetime | None
+    session: AsyncSession,
+    source: str,
+    watermark: datetime | None,
+    last_full_sync_at: datetime | None,
+    *,
+    resource: str = TASKS_RESOURCE,
 ) -> None:
-    """Upsert de `sync_state` (tarefas). `updated_at` vai explícito: o `onupdate`
-    do modelo não vale para `ON CONFLICT DO UPDATE`."""
+    """Upsert de `sync_state` (por padrão, o das tarefas). `updated_at` vai
+    explícito: o `onupdate` do modelo não vale para `ON CONFLICT DO UPDATE`."""
     values: dict[str, Any] = {"watermark": watermark}
     if last_full_sync_at is not None:
         values["last_full_sync_at"] = last_full_sync_at
-    stmt = insert(SyncStateRow).values(source=source, resource=TASKS_RESOURCE, **values)
+    stmt = insert(SyncStateRow).values(source=source, resource=resource, **values)
     stmt = stmt.on_conflict_do_update(
         index_elements=["source", "resource"], set_={**values, "updated_at": func.now()}
     )
