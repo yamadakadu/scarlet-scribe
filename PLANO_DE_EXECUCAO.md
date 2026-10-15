@@ -168,8 +168,10 @@ Decisões do Carlos (2026-10-15):
 - [x] Hooks estendidos ao GitLab: só GET em `connectors/gitlab/`, sem escrita na API do GitLab, tokens do GitLab tratados como segredo, `gitlab_spike.py` na área do Batedor e `selfcheck.py` passando (58/58)
 - [x] FM-01: barra lateral de apps (Vitrine), integrada em a237fc1
 - [x] Decisão: usar o gitlab.com ou o self-hosted, conforme o que for disponibilizado (2026-10-15)
-- [ ] FM-02: pré-requisitos do GitLab, na instância disponível (Carlos)
-- [ ] FM-03: spike do GitLab (Batedor)
+- [x] FM-02: pré-requisitos do GitLab, na instância disponível (Carlos): gitlab.com, personal access token só com `read_api` e um grupo de teste
+- [x] Variáveis do GitLab documentadas no `.env.example` (Alicerce, integrada em 47fb095)
+- [x] FM-03: spike do GitLab (Batedor), integrado em 5a31907
+- [x] Decisões pós-spike (Carlos, 2026-10-15): commits de todos os branches (`all=true`); assignees e reviewers dos MRs só no `raw` por enquanto
 - [ ] FM-04: modelo e tabelas do GitLab (Arquivista)
 - [ ] FM-05: conector GitLab e variáveis de ambiente (Conector e Alicerce)
 - [ ] FM-06: sync do GitLab (Sincronista)
@@ -234,9 +236,9 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 | F1-12 | integrado | Branch `alicerce/frontend-compose` (55d6e05). Pendente: ver `api` e `worker` subindo, o que depende da F1-07 e da F1-08 (fica para a F1-11) |
 | F1-11 | pendente | Inclui a conferência visual da FM-01 |
 | FM-01 | integrado | Branch `vitrine/sidebar-apps` (ddbc799, c19dc48, 1d67ee2), integrada em a237fc1. Aprovada pelo Revisor após 2 bloqueios corrigidos; os ajustes do Carlos (link do GitHub no header, controles menores, barra de sync fluida) foram conferidos pelo Maestro no diff. A conferência visual final fica para a F1-11 |
-| FM-02 | pendente | Aguardando o Carlos |
-| FM-03 | pendente | |
-| FM-04 | pendente | |
+| FM-02 | integrado | gitlab.com com personal access token só com `read_api` e o grupo de teste `yamada-group3`. Variáveis no `.env.example` em 47fb095 |
+| FM-03 | integrado | Branch `batedor/spike-gitlab` (3856d6b), integrada em 5a31907. Achados no `ARCHITECTURE.md` › "GitLab": `RateLimit-Reset` em epoch, commits sem `X-Total`, autor do MR sem e-mail. Pendentes: `Retry-After` no 429, group e project access tokens no gitlab.com e o que um bot Reporter enxerga |
+| FM-04 | em andamento | |
 | FM-05 | pendente | Os hooks já cobrem o GitLab |
 | FM-06 | pendente | |
 | FM-07 | pendente | |

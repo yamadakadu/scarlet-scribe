@@ -513,18 +513,21 @@ Decisões do Carlos (2026-10-15). A plataforma passa a reunir várias ferramenta
 
 - **Autenticação:** token de um usuário bot, só com o escopo **`read_api`**, enviado no header `PRIVATE-TOKEN`. No gitlab.com, uma conta bot gratuita (ou a do Carlos, só durante o desenvolvimento) com um *personal access token*; os group e project access tokens podem exigir plano pago lá **(a confirmar)**. No self-hosted, um bot com papel **Reporter** nos grupos e projetos sincronizados, com um personal, group ou project access token. Ao contrário do ClickUp, o GitLab tem escopos: o `read_api` garante a leitura pelo próprio token, além da regra de só usar GET no código.
 - **Base:** `{GITLAB_URL}/api/v4`, com `GITLAB_URL` igual a `https://gitlab.com` ou à URL do self-hosted. O cliente aceita um bundle de CA próprio para certificados internos (só no self-hosted).
-- **Endpoints previstos (a confirmar no spike, FM-03):**
+- **Spike (FM-03, 2026-10-15, `backend/scripts/gitlab_spike.py`):** feito no gitlab.com (versão 19.6, `enterprise=true`) com um personal access token só com `read_api`, num grupo de teste pequeno (3 projetos, 4 MRs, 1 membro). Os campos e formatos abaixo estão confirmados; volumes e paginação longa não foram exercitados.
+- **Endpoints (confirmados no spike):**
 
-  | Dado | Endpoint |
-  |---|---|
-  | Escopo do token | `GET /personal_access_tokens/self` |
-  | Projetos de um grupo | `GET /groups/:id/projects?include_subgroups=true&archived=false` |
-  | Projeto avulso | `GET /projects/:id` |
-  | Merge requests | `GET /projects/:id/merge_requests?state=all&updated_after=...` |
-  | Commits | `GET /projects/:id/repository/commits?since=...` (só o branch padrão ou `all=true`, a decidir pelo custo) |
+  | Dado | Endpoint | Notas |
+  |---|---|---|
+  | Escopo do token | `GET /personal_access_tokens/self` | Traz `scopes`, `active`, `revoked` e `expires_at` |
+  | Projetos de um grupo | `GET /groups/:id/projects?include_subgroups=true&archived=false` | Objeto completo, com mais de 100 campos: o mapper guarda só `id`, `name`, `path_with_namespace`, `web_url`, `default_branch` (nulo em repositório vazio), `archived` e `last_activity_at` |
+  | Projeto avulso | `GET /projects/:id` | Para `GITLAB_PROJECT_IDS` |
+  | Merge requests | `GET /projects/:id/merge_requests?state=all&scope=all&updated_after=...` | O `updated_after` filtra de fato. `author`, `assignees` e `reviewers` trazem `id` e `username`, **sem e-mail** (só `public_email`, muitas vezes vazio) |
+  | Commits | `GET /projects/:id/repository/commits?all=true&since=...` | **Decisão do Carlos (2026-10-15): todos os branches (`all=true`)**, para mostrar também o trabalho ainda não mesclado. No projeto testado, 44 commits contra 36 só do branch padrão, com o mesmo custo. Um commit visto em vários branches vem uma vez por sha. Traz `author_name` e `author_email` |
+  | Membros do grupo | `GET /groups/:id/members/all` | O `read_api` permite. Sem e-mail privado. Fora do recorte atual |
 
-- **Paginação (a confirmar):** `per_page=100`, seguindo `X-Next-Page` ou o header `Link`; keyset onde houver suporte. `X-Total` some acima de 10 mil itens, então o cliente não depende dele.
-- **Rate limit (a confirmar):** headers `RateLimit-*` e 429 com `Retry-After`; o limite depende da configuração da instância. O cliente segue o mesmo padrão do ClickUp: limite preventivo configurável, ajustado só para baixo pelos headers, e retries com backoff.
+  Todas as datas vêm em ISO 8601 com milissegundos e `Z`, e `updated_after`/`since` aceitam o mesmo formato.
+- **Paginação (confirmada):** offset com `per_page=100`, seguindo `X-Next-Page` (presente e **vazio na última página**) ou o `Link rel="next"`. Na listagem de commits, `X-Total` e `X-Total-Pages` **nunca vêm**, nem com poucos itens: o cliente não usa o total em nenhuma listagem. A keyset funciona em `/projects`, mas não é usada (ver "Compatibilidade").
+- **Rate limit (confirmado no gitlab.com):** os headers vêm em toda resposta 200: `RateLimit-Limit` (2000 por minuto no gitlab.com, por usuário autenticado), `RateLimit-Remaining`, `RateLimit-Observed`, `RateLimit-Name` e `RateLimit-Reset`. **O `RateLimit-Reset` é um epoch absoluto em segundos**, não os segundos que faltam. O 429 não foi observado, então o `Retry-After` continua **(a confirmar)**. O cliente segue o padrão do ClickUp: limite preventivo `GITLAB_RATE_LIMIT_PER_MINUTE`, ajustado só para baixo pelos headers, e retries com backoff.
 - **Variáveis (FM-05):** `GITLAB_URL`, `GITLAB_API_TOKEN`, `GITLAB_GROUP_IDS`, `GITLAB_PROJECT_IDS`, `GITLAB_CA_BUNDLE` (opcional) e `GITLAB_RATE_LIMIT_PER_MINUTE`. Cada fonte é opcional: sem as variáveis do GitLab, o sync e a API seguem só com o ClickUp.
 - **Compatibilidade entre instâncias:** o gitlab.com roda sempre a versão mais nova, e o self-hosted pode ser mais antigo. Por isso:
   - o conector segue o caminho mais compatível: paginação por offset com `X-Next-Page`/`Link`, sem depender de keyset nem de `X-Total`. Recurso que dependa de versão só entra com checagem da versão (`GET /version`);
@@ -537,21 +540,30 @@ Decisões do Carlos (2026-10-15). A plataforma passa a reunir várias ferramenta
   4. rodar um sync e conferir no navegador.
 - **Código:** `connectors/gitlab/` com `client.py`, `schemas.py`, `mapper.py` e `connector.py`, como no ClickUp. `base.py` e `factory.py` são generalizados só no necessário para mais de uma fonte (por exemplo, `create_connectors(settings)` devolvendo os conectores configurados).
 
-### Banco (migration `0002`, a detalhar depois do spike)
+### Banco (migration `0002`)
 
-Mesmas convenções das tabelas sincronizadas (`id`, `source`, `external_id`, `raw`, `synced_at`, `deleted_at`):
-- `repositories`: nome, `path_with_namespace`, `web_url`, branch padrão e `archived`;
-- `merge_requests`: `repository_id`, `iid`, título, estado, branches de origem e de destino, autor, `web_url`, `created_at`, `merged_at`, `closed_at` e `source_updated_at`. Assignees e reviewers entram se o spike mostrar que vale a pena;
-- `commits`: `repository_id`, `sha`, título, nome e e-mail do autor, `authored_at` e `web_url`, únicos por `(repository_id, sha)`.
-
-Os membros do GitLab, quando entrarem, usam `people` com `source = 'gitlab'`, sem fundir com as pessoas do ClickUp por enquanto. Os watermarks vão para `sync_state` (`resource` como `gitlab:merge_requests:<repositório>`).
+Mesmas convenções das tabelas sincronizadas (`id` UUID, `source = 'gitlab'`, `external_id`, `raw`, `synced_at`, `deleted_at`, `UNIQUE (source, external_id)`). O `raw` guarda o payload já reduzido pelo mapper (os projetos têm mais de 100 campos).
+- `repositories`: `external_id` = id do projeto; `name`, `path_with_namespace`, `web_url`, `default_branch` (aceita nulo), `archived` (padrão `false`) e `last_activity_at`.
+- `merge_requests`:
+  - `external_id` = `id` global do MR; `repository_id` (FK obrigatória) e `iid` (inteiro), únicos por `(repository_id, iid)`;
+  - `title`, `state` (texto com `CHECK`: `opened`, `closed`, `merged` e `locked`), `draft` (booleano), `source_branch`, `target_branch` e `web_url`;
+  - `author_id` (FK para `people`, aceita nulo) e `external_author_id`, no padrão das tarefas;
+  - `created_at_source`, `merged_at`, `closed_at` e `source_updated_at` (de `updated_at`).
+- `commits`:
+  - `external_id` = `<id do projeto>:<sha>`, porque o mesmo sha pode existir em projetos diferentes (forks); `repository_id` (FK obrigatória) e `sha`, únicos por `(repository_id, sha)`;
+  - `short_sha`, `title`, `author_name`, `author_email`, `authored_at`, `committed_at` e `web_url`;
+  - o autor do commit é a identidade do git (nome e e-mail), sem FK para `people`.
+- **Pessoas:** os autores dos MRs entram em `people` com `source = 'gitlab'` e `external_id` = id do usuário no GitLab (`username`; `email` só se vier `public_email`). Não se fundem com as pessoas do ClickUp por enquanto.
+- **Fora do recorte (decisão do Carlos, 2026-10-15):** assignees e reviewers dos MRs ficam só no `raw`. Ganham tabelas próprias quando for preciso filtrar por eles.
+- **Índices:** `merge_requests (repository_id)`, `merge_requests (source_updated_at)`, `merge_requests (author_id)` e `commits (repository_id, authored_at)`.
+- **Watermarks:** em `sync_state`, com `resource` = `gitlab:merge_requests:<id do projeto>` e `gitlab:commits:<id do projeto>`.
 
 ### Sync
 
 O `SyncService` roda, no mesmo run e sob o mesmo advisory lock, os passos de cada fonte configurada. Uma falha numa fonte deixa o run `partial`, e não `failed`. `stats` ganha uma chave por fonte. Os passos do GitLab:
 1. repositórios, sempre completos, com exclusões só se a listagem vier completa;
 2. merge requests incrementais por `updated_after`, com a mesma margem de 5 min do ClickUp;
-3. commits de cada repositório desde o watermark.
+3. commits de todos os branches de cada repositório (`all=true`) desde o watermark, com a mesma margem de 5 min; um sha repetido só atualiza o registro.
 
 ### API
 
