@@ -172,7 +172,7 @@ Decisões do Carlos (2026-10-15):
 - [x] Variáveis do GitLab documentadas no `.env.example` (Alicerce, integrada em 47fb095)
 - [x] FM-03: spike do GitLab (Batedor), integrado em 5a31907
 - [x] Decisões pós-spike (Carlos, 2026-10-15): commits de todos os branches (`all=true`); assignees e reviewers dos MRs só no `raw` por enquanto
-- [ ] FM-04: modelo e tabelas do GitLab (Arquivista)
+- [x] FM-04: modelo e tabelas do GitLab (Arquivista), integrada em 3cc8bad
 - [ ] FM-05: conector GitLab e variáveis de ambiente (Conector e Alicerce)
 - [ ] FM-06: sync do GitLab (Sincronista)
 - [ ] FM-07: rotas `/sources`, `/repositories`, `/merge-requests` e `/commits` (Portal)
@@ -238,8 +238,8 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 | FM-01 | integrado | Branch `vitrine/sidebar-apps` (ddbc799, c19dc48, 1d67ee2), integrada em a237fc1. Aprovada pelo Revisor após 2 bloqueios corrigidos; os ajustes do Carlos (link do GitHub no header, controles menores, barra de sync fluida) foram conferidos pelo Maestro no diff. A conferência visual final fica para a F1-11 |
 | FM-02 | integrado | gitlab.com com personal access token só com `read_api` e o grupo de teste `yamada-group3`. Variáveis no `.env.example` em 47fb095 |
 | FM-03 | integrado | Branch `batedor/spike-gitlab` (3856d6b), integrada em 5a31907. Achados no `ARCHITECTURE.md` › "GitLab": `RateLimit-Reset` em epoch, commits sem `X-Total`, autor do MR sem e-mail. Pendentes: `Retry-After` no 429, group e project access tokens no gitlab.com e o que um bot Reporter enxerga |
-| FM-04 | em andamento | |
-| FM-05 | pendente | Os hooks já cobrem o GitLab |
+| FM-04 | integrado | Branch `arquivista/modelos-gitlab` (1b810a2, d6e36b8), integrada em 3cc8bad. Migration `0003`. Aprovada pelo Revisor sem bloqueios; aplicados o validator do autor do MR e as docstrings. Ficaram de fora o índice redundante `merge_requests (repository_id)` e um índice só em `commits (authored_at)` para a lista global, que só entra se a tela ficar lenta |
+| FM-05 | em andamento | Os hooks já cobrem o GitLab. Primeiro as variáveis no `config.py` (Alicerce); depois o conector |
 | FM-06 | pendente | |
 | FM-07 | pendente | |
 | FM-08 | pendente | |
