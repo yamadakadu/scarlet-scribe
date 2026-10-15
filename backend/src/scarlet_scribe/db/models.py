@@ -1,4 +1,4 @@
-"""Tabelas da Fase 1 (SQLAlchemy 2, estilo `Mapped`).
+"""Tabelas da Fase 1 e da Fase M, o GitLab (SQLAlchemy 2, estilo `Mapped`).
 
 As tabelas sincronizadas herdam `SyncedMixin` (ver `db/base.py`). As da
 Fase 2 entram numa migration própria e não são declaradas aqui.
@@ -16,13 +16,14 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from scarlet_scribe.db.base import Base, SyncedMixin, text_enum
-from scarlet_scribe.domain.models import ContainerKind
+from scarlet_scribe.domain.models import ContainerKind, MergeRequestState
 from scarlet_scribe.domain.sync import SyncStatus, SyncTrigger
 
 
@@ -137,6 +138,87 @@ class TaskRow(SyncedMixin, Base):
     assignees: Mapped[list[PersonRow]] = relationship(
         secondary=task_assignees, back_populates="tasks"
     )
+
+
+class RepositoryRow(SyncedMixin, Base):
+    """Repositório de código (projeto do GitLab)."""
+
+    __tablename__ = "repositories"
+
+    name: Mapped[str] = mapped_column(Text)
+    path_with_namespace: Mapped[str] = mapped_column(Text)
+    web_url: Mapped[str | None] = mapped_column(Text)
+    default_branch: Mapped[str | None] = mapped_column(Text)
+    archived: Mapped[bool] = mapped_column(server_default=text("false"))
+    last_activity_at: Mapped[datetime | None]
+
+    merge_requests: Mapped[list["MergeRequestRow"]] = relationship(
+        back_populates="repository"
+    )
+    commits: Mapped[list["CommitRow"]] = relationship(back_populates="repository")
+
+
+class MergeRequestRow(SyncedMixin, Base):
+    """Merge request. `external_id` é o id global; `iid` é o número no repositório.
+
+    `author_id` aceita nulo e é preenchido pelo sync a partir de
+    `external_author_id`, como `container_id` em `tasks`.
+    """
+
+    __tablename__ = "merge_requests"
+
+    __table_args__ = (
+        UniqueConstraint("source", "external_id"),
+        UniqueConstraint("repository_id", "iid"),
+    )
+
+    repository_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("repositories.id"), index=True
+    )
+    iid: Mapped[int]
+    title: Mapped[str] = mapped_column(Text)
+    state: Mapped[MergeRequestState] = mapped_column(
+        text_enum(MergeRequestState, "state")
+    )
+    draft: Mapped[bool] = mapped_column(server_default=text("false"))
+    source_branch: Mapped[str | None] = mapped_column(Text)
+    target_branch: Mapped[str | None] = mapped_column(Text)
+    web_url: Mapped[str | None] = mapped_column(Text)
+    author_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("people.id", ondelete="SET NULL"), index=True
+    )
+    external_author_id: Mapped[str | None] = mapped_column(Text)
+    created_at_source: Mapped[datetime | None]
+    merged_at: Mapped[datetime | None]
+    closed_at: Mapped[datetime | None]
+    source_updated_at: Mapped[datetime | None] = mapped_column(index=True)
+
+    repository: Mapped[RepositoryRow] = relationship(back_populates="merge_requests")
+    author: Mapped[PersonRow | None] = relationship()
+
+
+class CommitRow(SyncedMixin, Base):
+    """Commit. `external_id` é '<id do projeto>:<sha>' (o mesmo sha existe em forks)."""
+
+    __tablename__ = "commits"
+
+    __table_args__ = (
+        UniqueConstraint("source", "external_id"),
+        UniqueConstraint("repository_id", "sha"),
+        Index("ix_commits_repository_id_authored_at", "repository_id", "authored_at"),
+    )
+
+    repository_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("repositories.id"))
+    sha: Mapped[str] = mapped_column(Text)
+    short_sha: Mapped[str | None] = mapped_column(Text)
+    title: Mapped[str] = mapped_column(Text)
+    author_name: Mapped[str | None] = mapped_column(Text)
+    author_email: Mapped[str | None] = mapped_column(Text)
+    authored_at: Mapped[datetime | None]
+    committed_at: Mapped[datetime | None]
+    web_url: Mapped[str | None] = mapped_column(Text)
+
+    repository: Mapped[RepositoryRow] = relationship(back_populates="commits")
 
 
 class SyncRunRow(Base):

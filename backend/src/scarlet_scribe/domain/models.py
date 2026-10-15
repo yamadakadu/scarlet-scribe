@@ -9,7 +9,7 @@ banco. Todos os instantes são `datetime` com fuso (UTC); durações em ms.
 from enum import StrEnum
 from typing import Any
 
-from pydantic import AwareDatetime, BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field, model_validator
 
 
 class ContainerKind(StrEnum):
@@ -18,6 +18,15 @@ class ContainerKind(StrEnum):
     SPACE = "space"
     FOLDER = "folder"
     LIST = "list"
+
+
+class MergeRequestState(StrEnum):
+    """Estados canônicos de um merge request; hoje iguais aos do GitLab."""
+
+    OPENED = "opened"
+    CLOSED = "closed"
+    MERGED = "merged"
+    LOCKED = "locked"
 
 
 class SourceRecord(BaseModel):
@@ -97,10 +106,80 @@ class Task(SourceRecord):
     )
 
 
+class Repository(SourceRecord):
+    """Repositório de código (no GitLab, um projeto)."""
+
+    name: str
+    path_with_namespace: str
+    web_url: str | None = None
+    default_branch: str | None = Field(
+        default=None, description="Nulo em repositório vazio"
+    )
+    archived: bool = False
+    last_activity_at: AwareDatetime | None = None
+
+
+class MergeRequest(SourceRecord):
+    """Merge request. `external_id` é o id global; `iid` é o número no repositório."""
+
+    external_repository_id: str = Field(description="Id na origem do repositório")
+    iid: int
+    title: str
+    state: MergeRequestState
+    draft: bool = False
+    source_branch: str | None = None
+    target_branch: str | None = None
+    web_url: str | None = None
+    external_author_id: str | None = Field(
+        default=None, description="Id na origem do autor (uma Person)"
+    )
+    author: Person | None = Field(
+        default=None,
+        description="Dados do autor que vieram no próprio MR, para o sync gravar em `people`",
+    )
+    created_at_source: AwareDatetime | None = None
+    merged_at: AwareDatetime | None = None
+    closed_at: AwareDatetime | None = None
+    source_updated_at: AwareDatetime | None = Field(
+        default=None, description="Última alteração na origem; base do watermark do sync"
+    )
+
+    @model_validator(mode="after")
+    def _author_ids_agree(self) -> "MergeRequest":
+        """Com `author`, `external_author_id` é o `external_id` dele (preenchido se vazio)."""
+        if self.author is not None:
+            if self.external_author_id is None:
+                self.external_author_id = self.author.external_id
+            elif self.external_author_id != self.author.external_id:
+                raise ValueError("external_author_id diverge de author.external_id")
+        return self
+
+
+class Commit(SourceRecord):
+    """Commit. `external_id` é '<id do repositório>:<sha>'.
+
+    O autor é a identidade do git (nome e e-mail), sem vínculo com `Person`.
+    """
+
+    external_repository_id: str = Field(description="Id na origem do repositório")
+    sha: str
+    short_sha: str | None = None
+    title: str
+    author_name: str | None = None
+    author_email: str | None = None
+    authored_at: AwareDatetime | None = None
+    committed_at: AwareDatetime | None = None
+    web_url: str | None = None
+
+
 __all__ = [
+    "Commit",
     "Container",
     "ContainerKind",
+    "MergeRequest",
+    "MergeRequestState",
     "Person",
+    "Repository",
     "SourceRecord",
     "Task",
     "Workspace",
