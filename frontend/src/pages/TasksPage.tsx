@@ -120,16 +120,10 @@ export function TasksPage({ archived = false }: { archived?: boolean }) {
             ))}
           </select>
         </label>
-        {!archived && (
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={encerradas}
-              onChange={(e) => set('encerradas', e.target.checked ? '1' : '')}
-            />
-            Incluir encerradas
-          </label>
-        )}
+        <label className="check">
+          <input type="checkbox" checked={encerradas} onChange={(e) => set('encerradas', e.target.checked ? '1' : '')} />
+          Incluir encerradas
+        </label>
         {hasFilters && (
           <button type="button" onClick={() => setParams({}, { replace: true })}>
             Limpar filtros
