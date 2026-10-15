@@ -453,7 +453,7 @@ Todas as rotas usam o prefixo `/api/v1` e respondem em JSON, com datas em ISO 86
 |---|---|---|
 | `GET /health` | — | `{ status, database, latest_sync }`, com `status` e `database` em `ok` ou `error`; 503 com o mesmo corpo quando o banco não responde |
 | `GET /projects` | `kind`, `parent_id` | Árvore space/folder/list, sem paginação |
-| `GET /people` | `q` (busca em `username` ou `email`, sem diferenciar maiúsculas; `%` e `_` são literais) | Members, ordenados por `username` |
+| `GET /people` | `q` (busca em `username` ou `email`, sem diferenciar maiúsculas; `%` e `_` são literais), `source` (padrão `clickup`; Fase M) | Members, ordenados por `username` |
 | `GET /tasks` | `container_id`, `status`, `assignee_id`, `due_from`, `due_to`, `is_milestone`, `include_closed` (padrão `false`), `archived` (padrão `false`: só as ativas; `true`: só as arquivadas), `q` (busca no nome), `order_by` (`due_date`, `updated_at` ou `name`) | Lista paginada |
 | `GET /tasks/{id}` | — | Detalhe da tarefa, com assignees e subtarefas. (Fase 2) Ganha o total de horas, que soma **só as entradas sincronizadas**, ou seja, as das pessoas conectadas. Por isso vem acompanhado de `time_tracked_coverage`, que diz quantos assignees estão conectados. Enquanto a regra de visibilidade não for definida, mostra só o total, sem detalhar por pessoa |
 | `GET /milestones` | `container_id`, `due_from`, `due_to` (nunca inclui arquivadas) | Atalho para `GET /tasks?is_milestone=true`, ordenado por `due_date` |
@@ -567,14 +567,29 @@ O `SyncService` roda, no mesmo run e sob o mesmo advisory lock, os passos de cad
 
 ### API
 
-| Método e rota | Retorno |
-|---|---|
-| `GET /sources` | Os apps configurados, com `id`, `name`, `enabled` e o último sync. Alimenta a barra lateral |
-| `GET /repositories` | Lista paginada dos repositórios |
-| `GET /merge-requests` | Lista paginada; filtros `repository_id`, `state`, `q` e `updated_from` |
-| `GET /commits` | Lista paginada; filtros `repository_id`, `from`, `to` e `q` |
+| Método e rota | Filtros (query) | Retorno |
+|---|---|---|
+| `GET /sources` | — | Os 2 apps, sempre nesta ordem: `clickup` e `gitlab`, sem paginação. Alimenta a barra lateral |
+| `GET /repositories` | `q` (em `name` ou `path_with_namespace`), `archived` (padrão `false`: só os ativos; `true`: só os arquivados) | Lista paginada, ordenada por `path_with_namespace` sem diferenciar maiúsculas |
+| `GET /merge-requests` | `repository_id`, `state` (repetível), `author_id`, `q` (no título), `updated_from` | Lista paginada, por `source_updated_at` decrescente |
+| `GET /commits` | `repository_id`, `from`, `to` (sobre `authored_at`), `q` (no título) | Lista paginada, por `authored_at` decrescente |
 
-Seguem as convenções de "API HTTP": prefixo `/api/v1`, `{ items, total }` e `deleted_at` filtrado.
+Seguem as convenções de "API HTTP": prefixo `/api/v1`, `{ items, total }`, `limit`/`offset`, `deleted_at` filtrado, `raw` nunca sai e operationId = nome da função (`list_sources`, `list_repositories`, `list_merge_requests`, `list_commits`). Detalhes do contrato (decididos na FM-07):
+- **`/sources`:** cada item tem `id`, `name` ("ClickUp" ou "GitLab"), `enabled` e `last_synced_at`.
+  - `enabled` vale, no ClickUp, quando token e team estão configurados; no GitLab, quando `gitlab_enabled` é verdadeiro.
+  - `last_synced_at` é o maior `synced_at` das linhas da fonte (ClickUp: `tasks`; GitLab: `repositories`), contando também as removidas, ou `null`. É "quando os dados daquela fonte foram vistos pela última vez", não o horário do último run: se o passo da fonte falhar, o valor fica parado.
+- **`/merge-requests`:**
+  - `state` aceita `opened`, `closed`, `merged` e `locked`; um valor vazio ou inválido dá 422 (diferente de `status` em `/tasks`, que ignora vazios);
+  - `author_id` só considera pessoas não removidas; `updated_from` segue a regra de datas de `due_from`;
+  - o item traz `id`, `iid`, `title`, `state`, `draft`, `source_branch`, `target_branch`, `web_url`, `created_at_source`, `merged_at`, `closed_at`, `source_updated_at`, `repository: { id, name, path_with_namespace }` e `author: { id, username } | null` (`null` também quando a pessoa foi removida);
+  - nulos de `source_updated_at` vão para o fim, e o `id` desempata.
+- **`/commits`:**
+  - `from` e `to` são inclusivos, com a mesma regra de `due_from`/`due_to` (uma data pura em `to` inclui o dia inteiro);
+  - o item traz `id`, `sha`, `short_sha`, `title`, `author_name`, `authored_at`, `committed_at`, `web_url` e `repository: { id, name, path_with_namespace }`;
+  - **`author_email` não sai na API** (dado pessoal fora do recorte da tela);
+  - nulos de `authored_at` vão para o fim, e o `id` desempata.
+- MRs e commits de um repositório removido não aparecem.
+- **`/people` ganha `source`** (padrão `clickup`), para que os autores do GitLab não apareçam nas telas do ClickUp. `?source=gitlab` lista só os do GitLab.
 
 ## Estrutura do repositório (alvo)
 

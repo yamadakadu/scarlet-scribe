@@ -175,7 +175,7 @@ Decisões do Carlos (2026-10-15):
 - [x] FM-04: modelo e tabelas do GitLab (Arquivista), integrada em 3cc8bad
 - [ ] FM-05: conector GitLab e variáveis de ambiente (Conector e Alicerce)
 - [ ] FM-06: sync do GitLab (Sincronista)
-- [ ] FM-07: rotas `/sources`, `/repositories`, `/merge-requests` e `/commits` (Portal)
+- [x] FM-07: rotas `/sources`, `/repositories`, `/merge-requests` e `/commits` (Portal), integrada em 4cf2003
 - [ ] FM-08: telas do GitLab e a sidebar lendo `/sources` (Vitrine)
 - [ ] FM-09: revisão de cada entrega (Revisor)
 - [ ] FM-10: verificação ponta a ponta (Maestro e Carlos)
@@ -239,9 +239,9 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 | FM-02 | integrado | gitlab.com com personal access token só com `read_api` e o grupo de teste `yamada-group3`. Variáveis no `.env.example` em 47fb095 |
 | FM-03 | integrado | Branch `batedor/spike-gitlab` (3856d6b), integrada em 5a31907. Achados no `ARCHITECTURE.md` › "GitLab": `RateLimit-Reset` em epoch, commits sem `X-Total`, autor do MR sem e-mail. Pendentes: `Retry-After` no 429, group e project access tokens no gitlab.com e o que um bot Reporter enxerga |
 | FM-04 | integrado | Branch `arquivista/modelos-gitlab` (1b810a2, d6e36b8), integrada em 3cc8bad. Migration `0003`. Aprovada pelo Revisor sem bloqueios; aplicados o validator do autor do MR e as docstrings. Ficaram de fora o índice redundante `merge_requests (repository_id)` e um índice só em `commits (authored_at)` para a lista global, que só entra se a tela ficar lenta |
-| FM-05 | em andamento | Os hooks já cobrem o GitLab. Primeiro as variáveis no `config.py` (Alicerce); depois o conector |
+| FM-05 | em revisão | Variáveis no `config.py` integradas em 7b5adf9. Conector na branch `conector/gitlab` (a3c540c), com o Revisor. Decisões do Carlos a aplicar: incluir os projetos arquivados (marcados `archived`) e só os projetos do próprio grupo (`with_shared=false`) |
 | FM-06 | pendente | |
-| FM-07 | pendente | |
+| FM-07 | integrado | Branch `portal/rotas-gitlab` (dd74814, d6ee014), integrada em 4cf2003. Aprovada pelo Revisor sem bloqueios, testada com dados numa transação desfeita. Ajustes do Carlos: `source` em `/people` (padrão `clickup`), `author_id` sem pessoas removidas, `/repositories` ordenado sem diferenciar maiúsculas. Ficaram para depois: `/sources` sem índice em `tasks.synced_at` e a busca de commits por sha ou autor |
 | FM-08 | pendente | |
 | FM-09 | pendente | |
 | FM-10 | pendente | |
