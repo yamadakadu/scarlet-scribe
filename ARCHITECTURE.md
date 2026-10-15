@@ -519,7 +519,7 @@ Decisões do Carlos (2026-10-15). A plataforma passa a reunir várias ferramenta
   | Dado | Endpoint | Notas |
   |---|---|---|
   | Escopo do token | `GET /personal_access_tokens/self` | Traz `scopes`, `active`, `revoked` e `expires_at` |
-  | Projetos de um grupo | `GET /groups/:id/projects?include_subgroups=true&archived=false` | Objeto completo, com mais de 100 campos: o mapper guarda só `id`, `name`, `path_with_namespace`, `web_url`, `default_branch` (nulo em repositório vazio), `archived` e `last_activity_at` |
+  | Projetos de um grupo | `GET /groups/:id/projects?include_subgroups=true&with_shared=false` | **Decisões do Carlos (2026-10-15):** sem filtro de arquivados, porque os arquivados vêm com `archived=true` em vez de sumir e virar `deleted_at`; e `with_shared=false`, porque os projetos compartilhados de outros grupos só entram por `GITLAB_PROJECT_IDS`. Objeto completo, com mais de 100 campos: o mapper guarda só `id`, `name`, `path_with_namespace`, `web_url`, `default_branch` (nulo em repositório vazio), `archived` e `last_activity_at` |
   | Projeto avulso | `GET /projects/:id` | Para `GITLAB_PROJECT_IDS` |
   | Merge requests | `GET /projects/:id/merge_requests?state=all&scope=all&updated_after=...` | O `updated_after` filtra de fato. `author`, `assignees` e `reviewers` trazem `id` e `username`, **sem e-mail** (só `public_email`, muitas vezes vazio) |
   | Commits | `GET /projects/:id/repository/commits?all=true&since=...` | **Decisão do Carlos (2026-10-15): todos os branches (`all=true`)**, para mostrar também o trabalho ainda não mesclado. No projeto testado, 44 commits contra 36 só do branch padrão, com o mesmo custo. Um commit visto em vários branches vem uma vez por sha. Traz `author_name` e `author_email` |
@@ -538,7 +538,13 @@ Decisões do Carlos (2026-10-15). A plataforma passa a reunir várias ferramenta
   2. refazer o spike (FM-03) contra a instância nova e corrigir este documento se algo divergir (versão, paginação, rate limit);
   3. apagar os dados do GitLab no banco (`commits`, `merge_requests`, `repositories`, as `people` com `source = 'gitlab'` e os `sync_state` com `resource` começando em `gitlab:`) com um script dedicado em `backend/scripts/`, que só toca nessas linhas;
   4. rodar um sync e conferir no navegador.
-- **Código:** `connectors/gitlab/` com `client.py`, `schemas.py`, `mapper.py` e `connector.py`, como no ClickUp. `base.py` e `factory.py` são generalizados só no necessário para mais de uma fonte (por exemplo, `create_connectors(settings)` devolvendo os conectores configurados).
+- **Código (FM-05):** `connectors/gitlab/` com `client.py`, `schemas.py`, `mapper.py` e `connector.py`, como no ClickUp. O protocolo `Connector` tem o formato do ClickUp (estrutura e tarefas), então as fontes de código têm um protocolo canônico próprio em `connectors/base.py`:
+  - `CodeConnector`: `source`, `async with`, `fetch_repositories() -> RepositorySnapshot`, `iter_merge_requests(repository_id, *, updated_since=None) -> BatchListing[MergeRequest]` e `iter_commits(repository_id, *, since=None) -> BatchListing[Commit]`. O `repository_id` é o `Repository.external_id`;
+  - `RepositorySnapshot` (repositórios e um `ListingReport` sempre `full`) e `BatchListing[T]` (lotes num `async for` de uma vez só, com o `report` lido no fim, como no `TaskListing`);
+  - `create_code_connector(settings)` em `factory.py`, que levanta `ConnectorConfigError` se `gitlab_enabled` for falso. O `create_connector` do ClickUp não mudou.
+  - Com `since`/`updated_since` nulo, a listagem é `full` e completa e pode autorizar exclusões naquele repositório; com data, é incremental e nunca autoriza. Erros por recurso (403/404, 5xx persistente, paginação que não termina) vão para `report.errors`; só `ConnectorAuthError` (401) e `ConnectorConfigError` saem como exceção. Falha de TLS não tem retry.
+  - O `raw` guarda só os campos usados: 7 no projeto, 16 no MR (`author`, `assignees` e `reviewers` só com `id`, `username` e `public_email`) e 8 no commit.
+  - `backend/scripts/gitlab_amostra_canonica.py` mostra os dados no formato canônico, sem token nem e-mails.
 
 ### Banco (migration `0003`)
 

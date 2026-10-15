@@ -173,7 +173,7 @@ Decisões do Carlos (2026-10-15):
 - [x] FM-03: spike do GitLab (Batedor), integrado em 5a31907
 - [x] Decisões pós-spike (Carlos, 2026-10-15): commits de todos os branches (`all=true`); assignees e reviewers dos MRs só no `raw` por enquanto
 - [x] FM-04: modelo e tabelas do GitLab (Arquivista), integrada em 3cc8bad
-- [ ] FM-05: conector GitLab e variáveis de ambiente (Conector e Alicerce)
+- [x] FM-05: conector GitLab e variáveis de ambiente (Conector e Alicerce), integrada em 4f0fee6
 - [ ] FM-06: sync do GitLab (Sincronista)
 - [x] FM-07: rotas `/sources`, `/repositories`, `/merge-requests` e `/commits` (Portal), integrada em 4cf2003
 - [ ] FM-08: telas do GitLab e a sidebar lendo `/sources` (Vitrine)
@@ -239,8 +239,8 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 | FM-02 | integrado | gitlab.com com personal access token só com `read_api` e o grupo de teste `yamada-group3`. Variáveis no `.env.example` em 47fb095 |
 | FM-03 | integrado | Branch `batedor/spike-gitlab` (3856d6b), integrada em 5a31907. Achados no `ARCHITECTURE.md` › "GitLab": `RateLimit-Reset` em epoch, commits sem `X-Total`, autor do MR sem e-mail. Pendentes: `Retry-After` no 429, group e project access tokens no gitlab.com e o que um bot Reporter enxerga |
 | FM-04 | integrado | Branch `arquivista/modelos-gitlab` (1b810a2, d6e36b8), integrada em 3cc8bad. Migration `0003`. Aprovada pelo Revisor sem bloqueios; aplicados o validator do autor do MR e as docstrings. Ficaram de fora o índice redundante `merge_requests (repository_id)` e um índice só em `commits (authored_at)` para a lista global, que só entra se a tela ficar lenta |
-| FM-05 | em revisão | Variáveis no `config.py` integradas em 7b5adf9. Conector na branch `conector/gitlab` (a3c540c), com o Revisor. Decisões do Carlos a aplicar: incluir os projetos arquivados (marcados `archived`) e só os projetos do próprio grupo (`with_shared=false`) |
-| FM-06 | pendente | |
+| FM-05 | integrado | Variáveis no `config.py` em 7b5adf9. Conector na branch `conector/gitlab` (a3c540c, f9b65fe), integrada em 4f0fee6. O Revisor bloqueou uma vez (falha de TLS entrava no retry), e a correção foi aprovada. Decisões do Carlos aplicadas: arquivados com `archived=true` e `with_shared=false`. Pendente: decidir se o cliente recusa `http://` fora de localhost (antes do self-hosted) |
+| FM-06 | em andamento | |
 | FM-07 | integrado | Branch `portal/rotas-gitlab` (dd74814, d6ee014), integrada em 4cf2003. Aprovada pelo Revisor sem bloqueios, testada com dados numa transação desfeita. Ajustes do Carlos: `source` em `/people` (padrão `clickup`), `author_id` sem pessoas removidas, `/repositories` ordenado sem diferenciar maiúsculas. Ficaram para depois: `/sources` sem índice em `tasks.synced_at` e a busca de commits por sha ou autor |
 | FM-08 | pendente | |
 | FM-09 | pendente | |
