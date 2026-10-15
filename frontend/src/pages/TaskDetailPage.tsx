@@ -3,13 +3,14 @@ import { ApiError } from '../api/client.ts'
 import { useTask } from '../api/queries.ts'
 import { TaskTable } from '../components/TaskTable.tsx'
 import { formatDate, formatDateTime } from '../lib/dates.ts'
+import { clickupPaths } from '../apps.ts'
 
 export function TaskDetailPage() {
   const { id = '' } = useParams()
   const navigate = useNavigate()
   const task = useTask(id)
   // Volta para a lista com os filtros, se a pessoa veio dela.
-  const back = () => (window.history.state?.idx > 0 ? navigate(-1) : navigate('/tarefas'))
+  const back = () => (window.history.state?.idx > 0 ? navigate(-1) : navigate(clickupPaths.tasks))
 
   if (task.isPending) return <p className="placeholder">Carregando…</p>
   if (task.isError) {
@@ -19,7 +20,7 @@ export function TaskDetailPage() {
         <p className="error" role="alert">
           {notFound ? 'Tarefa não encontrada.' : `Não foi possível carregar a tarefa: ${task.error.message}`}
         </p>
-        <Link to="/tarefas">Voltar às tarefas</Link>
+        <Link to={clickupPaths.tasks}>Voltar às tarefas</Link>
       </section>
     )
   }
@@ -27,7 +28,7 @@ export function TaskDetailPage() {
   const fields: { k: string; v: React.ReactNode }[] = [
     { k: 'Status', v: t.status ?? '—' },
     { k: 'Prioridade', v: t.priority ?? '—' },
-    { k: 'Projeto', v: t.container ? <Link to={`/tarefas?projeto=${t.container.id}`}>{t.container.name}</Link> : 'sem projeto' },
+    { k: 'Projeto', v: t.container ? <Link to={clickupPaths.tasksOfProject(t.container.id)}>{t.container.name}</Link> : 'sem projeto' },
     { k: 'Responsáveis', v: t.assignees.map((a) => a.username ?? a.email ?? '?').join(', ') || '—' },
     { k: 'Início', v: formatDate(t.start_date) },
     { k: 'Prazo', v: formatDate(t.due_date) },
@@ -53,7 +54,7 @@ export function TaskDetailPage() {
       )}
       {t.parent && (
         <p>
-          Subtarefa de <Link to={`/tarefas/${t.parent.id}`}>{t.parent.name}</Link>
+          Subtarefa de <Link to={clickupPaths.task(t.parent.id)}>{t.parent.name}</Link>
           {t.parent.archived && <span className="tag">arquivada</span>}
         </p>
       )}
