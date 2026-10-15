@@ -540,7 +540,7 @@ Decisões do Carlos (2026-10-15). A plataforma passa a reunir várias ferramenta
   4. rodar um sync e conferir no navegador.
 - **Código:** `connectors/gitlab/` com `client.py`, `schemas.py`, `mapper.py` e `connector.py`, como no ClickUp. `base.py` e `factory.py` são generalizados só no necessário para mais de uma fonte (por exemplo, `create_connectors(settings)` devolvendo os conectores configurados).
 
-### Banco (migration `0002`)
+### Banco (migration `0003`)
 
 Mesmas convenções das tabelas sincronizadas (`id` UUID, `source = 'gitlab'`, `external_id`, `raw`, `synced_at`, `deleted_at`, `UNIQUE (source, external_id)`). O `raw` guarda o payload já reduzido pelo mapper (os projetos têm mais de 100 campos).
 - `repositories`: `external_id` = id do projeto; `name`, `path_with_namespace`, `web_url`, `default_branch` (aceita nulo), `archived` (padrão `false`) e `last_activity_at`.
