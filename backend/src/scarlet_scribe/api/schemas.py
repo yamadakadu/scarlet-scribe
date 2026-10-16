@@ -200,6 +200,9 @@ class RepositoryOut(ApiModel):
     default_branch: str | None
     archived: bool
     last_activity_at: UtcDatetime | None
+    avatar_updated_at: UtcDatetime | None = Field(
+        description="Quando o ícone foi baixado; null se o repositório não tem ícone"
+    )
 
 
 class RepositoryPage(Page[RepositoryOut]):
@@ -248,6 +251,7 @@ class CommitOut(ApiModel):
     committed_at: UtcDatetime | None
     web_url: str | None
     repository: RepositoryRef
+    tags: list[str] = Field(description="Tags do commit, por nome; vazio se não houver")
 
 
 class CommitPage(Page[CommitOut]):
