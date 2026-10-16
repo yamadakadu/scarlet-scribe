@@ -1,13 +1,15 @@
-import { Link, useSearchParams } from 'react-router'
+import { Link } from 'react-router'
+import type { Task } from '../api/client.ts'
 import { useMilestones, useProjects } from '../api/queries.ts'
 import { endOfLocalDay, formatLongDay, isValidDay, localDay, startOfLocalDay } from '../lib/dates.ts'
+import { useUrlFilters } from '../lib/params.ts'
 import { flattenProjects } from '../lib/projects.ts'
-import type { Task } from '../api/client.ts'
-import { clickupPaths } from '../apps.ts'
+import { useTaskLink } from '../lib/taskLink.ts'
 
 /** Marcos agrupados pelo dia local do prazo. Filtros na URL: projeto, de, ate. */
 export function MilestonesPage() {
-  const [params, setParams] = useSearchParams()
+  const { params, set, clear } = useUrlFilters()
+  const taskLink = useTaskLink()
   const projeto = params.get('projeto') ?? ''
   const de = params.get('de') ?? ''
   const ate = params.get('ate') ?? ''
@@ -18,17 +20,6 @@ export function MilestonesPage() {
     isValidDay(de) ? startOfLocalDay(de) : undefined,
     isValidDay(ate) ? endOfLocalDay(ate) : undefined,
   )
-
-  const set = (key: string, value: string) =>
-    setParams(
-      (prev) => {
-        const next = new URLSearchParams(prev)
-        if (value) next.set(key, value)
-        else next.delete(key)
-        return next
-      },
-      { replace: true },
-    )
 
   const groups = new Map<string, Task[]>()
   for (const m of milestones.data?.items ?? []) {
@@ -64,7 +55,7 @@ export function MilestonesPage() {
           <input type="date" value={ate} onChange={(e) => set('ate', e.target.value)} />
         </label>
         {params.size > 0 && (
-          <button type="button" onClick={() => setParams({}, { replace: true })}>
+          <button type="button" onClick={clear}>
             Limpar filtros
           </button>
         )}
@@ -79,7 +70,7 @@ export function MilestonesPage() {
           <ul className="plain-list">
             {items.map((m) => (
               <li key={m.id}>
-                <Link to={clickupPaths.task(m.id)}>{m.name}</Link>
+                <Link {...taskLink(m.id)}>{m.name}</Link>
                 <span className="muted"> · {m.container?.name ?? 'sem projeto'}</span>
                 {m.status && <span className="tag">{m.status}</span>}
               </li>

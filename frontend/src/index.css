@@ -659,4 +659,96 @@ th {
   flex: none;
   width: 0.8rem;
   height: 0.8rem;
+
+/* Tarefa em modal / painel lateral */
+body:has(dialog.task-dialog[open]) {
+  overflow: hidden;
+}
+
+.task-dialog {
+  padding: 0;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 0.3);
+  overflow: hidden;
+}
+
+.task-dialog::backdrop {
+  background: rgb(0 0 0 / 0.45);
+}
+
+.task-dialog-inner {
+  box-sizing: border-box;
+  height: 100%;
+  max-height: inherit;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
+  padding: 0.75rem 1.25rem 1.5rem;
+}
+
+.task-dialog--modal {
+  width: min(52rem, calc(100vw - 2rem));
+  max-height: calc(100dvh - 4rem);
+  border-radius: 10px;
+}
+
+.task-dialog--drawer {
+  width: min(36rem, 100vw);
+  height: 100dvh;
+  max-height: 100dvh;
+  margin: 0 0 0 auto;
+  border-radius: 0;
+  border-width: 0 0 0 1px;
+}
+
+@media (max-width: 640px) {
+  .task-dialog--modal {
+    width: calc(100vw - 0.75rem);
+    max-height: calc(100dvh - 0.75rem);
+  }
+  .task-dialog-inner {
+    padding: 0.5rem 0.75rem 1rem;
+  }
+}
+
+.task-dialog-bar {
+  position: sticky;
+  top: -0.75rem;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 2rem;
+  background: var(--bg);
+}
+
+.task-title {
+  margin-top: 0.25rem;
+  font-size: 1.4rem;
+}
+
+.icon-button {
+  display: inline-flex;
+  padding: 0.3rem;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.icon-button:hover {
+  background: var(--bg-header);
+  color: var(--text-h);
+}
+
+.icon-button:focus-visible {
+  outline: 2px solid var(--accent);
+}
+
+.icon-button svg {
+  width: 1.25rem;
+  height: 1.25rem;
 }
