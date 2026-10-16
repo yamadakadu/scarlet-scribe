@@ -1,3 +1,4 @@
+import { ExternalLink } from '../components/ExternalLink.tsx'
 import type { MergeRequestState } from '../api/client.ts'
 import { useMergeRequests, useRepositories } from '../api/queries.ts'
 import { Pager } from '../components/Pager.tsx'
@@ -101,9 +102,7 @@ export function MergeRequestsPage() {
                     <tr key={m.id}>
                       <td>
                         {m.web_url ? (
-                          <a href={m.web_url} target="_blank" rel="noopener noreferrer">
-                            {m.title}
-                          </a>
+                          <ExternalLink href={m.web_url}>{m.title}</ExternalLink>
                         ) : (
                           m.title
                         )}{' '}

@@ -1,9 +1,40 @@
+import { useState } from 'react'
 import { useCommits, useRepositories } from '../api/queries.ts'
+import { CheckIcon, CopyIcon } from '../assets/icons/UiIcons.tsx'
+import { ExternalLink } from '../components/ExternalLink.tsx'
 import { Pager } from '../components/Pager.tsx'
 import { formatDateTime, isValidDay } from '../lib/dates.ts'
 import { useUrlFilters } from '../lib/params.ts'
 
-const PAGE_SIZE = 50
+const PAGE_SIZES = [10, 25, 50, 100]
+const DEFAULT_PAGE_SIZE = 25
+
+const canCopy = typeof navigator !== 'undefined' && !!navigator.clipboard?.writeText
+
+function CopyShaButton({ sha }: { sha: string }) {
+  const [copied, setCopied] = useState(false)
+  if (!canCopy) return null
+  const copy = () => {
+    navigator.clipboard.writeText(sha).then(
+      () => {
+        setCopied(true)
+        window.setTimeout(() => setCopied(false), 1500)
+      },
+      () => {},
+    )
+  }
+  return (
+    <button
+      type="button"
+      className={`copy-button${copied ? ' copied' : ''}`}
+      aria-label="Copiar hash do commit"
+      title={copied ? 'Copiado' : 'Copiar hash do commit'}
+      onClick={copy}
+    >
+      {copied ? <CheckIcon /> : <CopyIcon />}
+    </button>
+  )
+}
 
 /** Commits do GitLab. Filtros na URL: repositorio, de, ate (dias locais), q, pagina. */
 export function CommitsPage() {
@@ -13,6 +44,8 @@ export function CommitsPage() {
   const de = params.get('de') ?? ''
   const ate = params.get('ate') ?? ''
   const pagina = Math.max(1, Number(params.get('pagina')) || 1)
+  const porPaginaRaw = Number(params.get('por_pagina'))
+  const pageSize = PAGE_SIZES.includes(porPaginaRaw) ? porPaginaRaw : DEFAULT_PAGE_SIZE
   const deOk = !de || isValidDay(de)
   const ateOk = !ate || isValidDay(ate)
 
@@ -23,13 +56,13 @@ export function CommitsPage() {
     from: deOk ? de : undefined,
     to: ateOk ? ate : undefined,
     q,
-    limit: PAGE_SIZE,
-    offset: (pagina - 1) * PAGE_SIZE,
+    limit: pageSize,
+    offset: (pagina - 1) * pageSize,
   })
 
   const repoOptions = [...(repos.data?.items ?? []), ...(reposArchived.data?.items ?? [])]
   const total = commits.data?.total ?? 0
-  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const pages = Math.max(1, Math.ceil(total / pageSize))
 
   return (
     <section>
@@ -58,6 +91,19 @@ export function CommitsPage() {
         <label>
           Até
           <input type="date" value={ate} onChange={(e) => set('ate', e.target.value)} aria-invalid={!ateOk} />
+        </label>
+        <label>
+          Por página
+          <select
+            value={pageSize}
+            onChange={(e) => set('por_pagina', Number(e.target.value) === DEFAULT_PAGE_SIZE ? '' : e.target.value)}
+          >
+            {PAGE_SIZES.map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
         </label>
         {params.size > 0 && (
           <button type="button" onClick={clear}>
@@ -92,12 +138,13 @@ export function CommitsPage() {
                     <tr key={c.id}>
                       <td>
                         {c.web_url ? (
-                          <a href={c.web_url} target="_blank" rel="noopener noreferrer">
+                          <ExternalLink href={c.web_url}>
                             <code>{c.short_sha}</code>
-                          </a>
+                          </ExternalLink>
                         ) : (
                           <code>{c.short_sha}</code>
                         )}
+                        <CopyShaButton sha={c.sha} />
                       </td>
                       <td>{c.title}</td>
                       <td>{c.repository.name}</td>

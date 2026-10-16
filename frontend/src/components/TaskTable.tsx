@@ -1,6 +1,7 @@
 import { Link } from 'react-router'
 import type { Task } from '../api/client.ts'
 import { formatDate } from '../lib/dates.ts'
+import { StatusBadge } from './Badges.tsx'
 import { clickupPaths } from '../apps.ts'
 
 export function TaskTable({ tasks, showArchived }: { tasks: Task[]; showArchived?: boolean }) {
@@ -26,7 +27,9 @@ export function TaskTable({ tasks, showArchived }: { tasks: Task[]; showArchived
                 {showArchived && t.archived && <span className="tag">arquivada</span>}
                 {t.parent_id && <span className="tag">subtarefa</span>}
               </td>
-              <td>{t.status ?? '—'}</td>
+              <td>
+                <StatusBadge status={t.status} type={t.status_type} />
+              </td>
               <td>{t.container?.name ?? 'sem projeto'}</td>
               <td>{t.assignees.map((a) => a.username ?? a.email ?? '?').join(', ') || '—'}</td>
               <td>{formatDate(t.due_date)}</td>

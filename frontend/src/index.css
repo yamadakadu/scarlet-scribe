@@ -10,6 +10,19 @@
   --warn: #8a5a00;
   --error: #b3261e;
 
+  --pill-gray-fg: #4b5563;
+  --pill-gray-bg: #e5e7eb;
+  --pill-blue-fg: #1d4ed8;
+  --pill-blue-bg: #dbeafe;
+  --pill-green-fg: #15803d;
+  --pill-green-bg: #dcfce7;
+  --pill-dgreen-fg: #ecfdf5;
+  --pill-dgreen-bg: #166534;
+  --pill-red-fg: #b91c1c;
+  --pill-red-bg: #fee2e2;
+  --pill-amber-fg: #92400e;
+  --pill-amber-bg: #fef3c7;
+
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
 
   font: 16px/1.5 var(--sans);
@@ -33,6 +46,19 @@
     --ok: #5fd27a;
     --warn: #e0b54a;
     --error: #f2766d;
+
+    --pill-gray-fg: #d1d5db;
+    --pill-gray-bg: #3a3d48;
+    --pill-blue-fg: #93c5fd;
+    --pill-blue-bg: #1e3a6e;
+    --pill-green-fg: #86efac;
+    --pill-green-bg: #14532d;
+    --pill-dgreen-fg: #dcfce7;
+    --pill-dgreen-bg: #166534;
+    --pill-red-fg: #fca5a5;
+    --pill-red-bg: #7f1d1d;
+    --pill-amber-fg: #fcd34d;
+    --pill-amber-bg: #78350f;
   }
 }
 
@@ -209,7 +235,6 @@ a.app-sidebar-item:hover {
   border: none;
   background: none;
   color: inherit;
-  text-decoration: underline;
   font-size: inherit;
 }
 
@@ -221,7 +246,103 @@ h2 {
 
 a {
   color: var(--accent);
+  text-decoration: none;
 }
+
+a:hover {
+  color: var(--text-h);
+}
+
+a:focus-visible,
+.link-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.ext-link-icon {
+  width: 0.85em;
+  height: 0.85em;
+  margin-left: 0.2em;
+  vertical-align: -0.05em;
+}
+
+.back-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--accent);
+}
+
+.back-button:hover {
+  color: var(--text-h);
+}
+
+.back-button svg,
+.go-link svg {
+  width: 0.95em;
+  height: 0.95em;
+}
+
+.go-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.copy-button {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.4rem;
+  padding: 0.1rem;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  vertical-align: middle;
+}
+
+.copy-button:hover {
+  color: var(--text-h);
+}
+
+.copy-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.copy-button svg {
+  width: 0.95rem;
+  height: 0.95rem;
+}
+
+.copy-button.copied {
+  color: var(--ok);
+}
+
+.pill {
+  display: inline-block;
+  padding: 0 0.5rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--pill-fg);
+  background: var(--pill-bg);
+}
+
+.pill--neutral {
+  --pill-fg: var(--text-muted);
+  --pill-bg: transparent;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.pill--gray { --pill-fg: var(--pill-gray-fg); --pill-bg: var(--pill-gray-bg); }
+.pill--blue { --pill-fg: var(--pill-blue-fg); --pill-bg: var(--pill-blue-bg); }
+.pill--green { --pill-fg: var(--pill-green-fg); --pill-bg: var(--pill-green-bg); }
+.pill--dgreen { --pill-fg: var(--pill-dgreen-fg); --pill-bg: var(--pill-dgreen-bg); }
+.pill--red { --pill-fg: var(--pill-red-fg); --pill-bg: var(--pill-red-bg); }
+.pill--amber { --pill-fg: var(--pill-amber-fg); --pill-bg: var(--pill-amber-bg); }
 
 .muted {
   color: var(--text-muted);

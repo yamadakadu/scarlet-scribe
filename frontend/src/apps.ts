@@ -52,9 +52,9 @@ export const APPS: AppDef[] = [
     enabled: false,
     hint: 'em breve',
     nav: [
+      { path: GITLAB_ROUTES.repositories, label: 'Repositórios' },
       { path: GITLAB_ROUTES.mergeRequests, label: 'Merge Requests' },
       { path: GITLAB_ROUTES.commits, label: 'Commits' },
-      { path: GITLAB_ROUTES.repositories, label: 'Repositórios' },
     ],
   },
 ]
