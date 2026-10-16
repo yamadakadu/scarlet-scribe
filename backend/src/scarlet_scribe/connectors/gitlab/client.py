@@ -14,6 +14,12 @@ Regras (ver `ARCHITECTURE.md` › "Fase M: multi-integração" › "GitLab"):
 - Retries com backoff exponencial e jitter, até 5 tentativas: 429 espera o
   `Retry-After` (ou o `RateLimit-Reset`); 5xx, timeout e erro de rede usam
   backoff; 401, 403 e 404 não têm retry.
+- Ícone de projeto (`get_avatar`): o `avatar_url` só é validado (mesmo **host e
+  porta** de `GITLAB_URL`, https; http só se o `GITLAB_URL` também for), e o
+  download usa `GET /projects/:id/avatar`, porque o `/uploads/...` dá 401 ao
+  token. Assim o token só vai à API do próprio `GITLAB_URL`. Sem redirect.
+  Aceita só imagens raster (png, jpeg, gif, webp, bmp, ico, pela assinatura dos
+  bytes) de até 512 KB, lidas em streaming.
 - O token nunca aparece em logs, `repr` ou mensagens de erro.
 - Nenhuma exceção do httpx nem `pydantic.ValidationError` sai do cliente.
   Nas listagens, a validação é feita item a item: um item inválido é separado
@@ -50,6 +56,7 @@ from scarlet_scribe.connectors.gitlab.schemas import (
     GitLabMergeRequest,
     GitLabModel,
     GitLabProject,
+    GitLabTag,
 )
 
 if TYPE_CHECKING:
@@ -63,6 +70,18 @@ MAX_ATTEMPTS = 5
 BACKOFF_BASE_SECONDS = 1.0
 DEFAULT_RATE_LIMIT_PER_MINUTE = 600
 PAGE_SIZE = 100
+AVATAR_MAX_BYTES = 512 * 1024
+AVATAR_CONTENT_TYPES = frozenset(
+    {
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/webp",
+        "image/bmp",
+        "image/x-icon",
+        "image/vnd.microsoft.icon",
+    }
+)
 # Teto de páginas por listagem (1000 páginas = 100 mil itens). Protege contra uma
 # API que ignore `page` e devolva sempre páginas cheias.
 MAX_PAGES = 1000
@@ -121,6 +140,17 @@ class GitLabRateLimitError(GitLabHTTPError):
 
 class GitLabUnavailableError(GitLabHTTPError):
     """5xx, timeout ou erro de rede persistente depois de todas as tentativas."""
+
+
+class GitLabAvatarRejected(GitLabError):
+    """Ícone recusado (URL de outro host, tipo ou tamanho não permitidos).
+
+    `reason` não traz a URL nem o conteúdo da resposta.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 class GitLabPaginationError(GitLabError):
@@ -183,9 +213,9 @@ def _parse[M: BaseModel](model: type[M], data: Any, path: str) -> M:
 
 
 def _raw_item_id(item: Any) -> str | None:
-    """`id` de um item bruto (número ou sha), só para identificar descartados."""
+    """`id` de um item bruto (número ou sha; `name` nas tags), só para identificar descartados."""
     if isinstance(item, dict):
-        value = item.get("id")
+        value = item.get("id", item.get("name"))
         if isinstance(value, (str, int)) and not isinstance(value, bool):
             text = str(value).strip()
             return text[:64] or None
@@ -396,7 +426,9 @@ class GitLabClient:
         self._backoff_base = backoff_base_seconds
         self._sleep = sleep
         self._limiter = _RateLimiter(rate_limit_per_minute, sleep)
-        self._host = urlparse(root).netloc
+        parsed_root = urlparse(root)
+        self._host = parsed_root.netloc
+        self._origin = (parsed_root.scheme.lower(), parsed_root.hostname or "", _effective_port(parsed_root))
         self._http = httpx.AsyncClient(
             base_url=root + API_PATH,
             auth=_TokenAuth(secret),
@@ -479,6 +511,72 @@ class GitLabClient:
             f"/projects/{quote_id(project_id)}/repository/commits", params, GitLabCommit
         )
 
+    def iter_tag_pages(self, project_id: str | int) -> AsyncIterator[GitLabPage[GitLabTag]]:
+        """`GET /projects/:id/repository/tags`, página a página (ordem padrão do GitLab)."""
+        return self._iter_pages(f"/projects/{quote_id(project_id)}/repository/tags", [], GitLabTag)
+
+    async def get_avatar(self, url: str, project_id: str | int) -> tuple[str, bytes]:
+        """Baixa o ícone de um projeto: `(content_type, bytes)`.
+
+        `url` é o `avatar_url` do projeto e só passa pela política de origem:
+        mesmo esquema, host e porta do `GITLAB_URL` (https; http apenas se o
+        `GITLAB_URL` for http), sem credenciais. Fora disso, nenhuma requisição
+        sai e levanta `GitLabAvatarRejected`.
+
+        O download usa `GET /projects/:id/avatar` (API, aceita o `PRIVATE-TOKEN`),
+        não a `url`: o `/uploads/-/system/project/avatar/...` responde 401 ao
+        token (só aceita sessão web). Esse endpoint devolve
+        `application/octet-stream`, então o tipo vem da assinatura dos bytes
+        (png, jpeg, gif, webp, bmp, ico) e precisa estar em
+        `AVATAR_CONTENT_TYPES`; se o servidor informar um tipo de imagem, ele
+        também precisa estar na lista. Redirect não é seguido. O corpo não passa
+        de `AVATAR_MAX_BYTES`; a leitura para ao estourar o limite. Recusas
+        levantam `GitLabAvatarRejected`; 401 `GitLabAuthError`; as demais
+        falhas, as mesmas exceções de `_get`.
+        """
+        self._check_avatar_url(url)
+
+        async def read(response: httpx.Response) -> tuple[str, bytes]:
+            declared_type = response.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            if declared_type.startswith("image/") and declared_type not in AVATAR_CONTENT_TYPES:
+                raise GitLabAvatarRejected("tipo de conteúdo não permitido para ícone")
+            declared = _int_header(response.headers, "Content-Length")
+            if declared is not None and declared > AVATAR_MAX_BYTES:
+                raise GitLabAvatarRejected(f"ícone maior que {AVATAR_MAX_BYTES // 1024} KB")
+            data = bytearray()
+            async for chunk in response.aiter_bytes():
+                data.extend(chunk)
+                if len(data) > AVATAR_MAX_BYTES:
+                    raise GitLabAvatarRejected(f"ícone maior que {AVATAR_MAX_BYTES // 1024} KB")
+            if not data:
+                raise GitLabAvatarRejected("ícone vazio")
+            sniffed = sniff_image_type(bytes(data))
+            if sniffed is None:
+                raise GitLabAvatarRejected("conteúdo não é uma imagem raster permitida")
+            if declared_type in AVATAR_CONTENT_TYPES and declared_type != sniffed:
+                raise GitLabAvatarRejected("tipo declarado diferente do conteúdo")
+            return sniffed, bytes(data)
+
+        reply = await self._get(f"/projects/{quote_id(project_id)}/avatar", on_ok=read)
+        return reply.data
+
+    def _check_avatar_url(self, url: str) -> None:
+        try:
+            parsed = urlparse(url)
+            scheme = parsed.scheme.lower()
+            host = parsed.hostname or ""
+            port = _effective_port(parsed)
+        except ValueError:
+            raise GitLabAvatarRejected("URL do ícone inválida") from None
+        if scheme not in ("http", "https"):
+            raise GitLabAvatarRejected("URL do ícone com esquema não permitido")
+        if parsed.username is not None or parsed.password is not None:
+            raise GitLabAvatarRejected("URL do ícone com credenciais")
+        if scheme == "http" and self._origin[0] != "http":
+            raise GitLabAvatarRejected("URL do ícone em http com a origem em https")
+        if (scheme, host.lower(), port) != self._origin:
+            raise GitLabAvatarRejected("URL do ícone em outro host ou porta que o GITLAB_URL")
+
     async def _iter_pages[M: GitLabModel](
         self, path: str, base: Params, model: type[M]
     ) -> AsyncIterator[GitLabPage[M]]:
@@ -539,19 +637,46 @@ class GitLabClient:
         delay = self._backoff_base * (2 ** (attempt - 1))
         return delay + random.uniform(0, delay / 4)
 
-    async def _get(self, path: str, params: Params | None = None) -> _Reply:
-        """Faz um GET relativo a `/api/v4`. Único ponto de acesso à rede do cliente."""
+    @staticmethod
+    async def _consume(
+        response: httpx.Response,
+        shown: str,
+        on_ok: Callable[[httpx.Response], Awaitable[Any]] | None,
+    ) -> Any:
+        """Lê o corpo ainda dentro do streaming: `on_ok` num 2xx, o corpo inteiro nos demais."""
+        if response.status_code < 300 and on_ok is not None:
+            return await on_ok(response)
+        await response.aread()
+        return None
+
+    async def _get(
+        self,
+        path: str,
+        params: Params | None = None,
+        *,
+        on_ok: Callable[[httpx.Response], Awaitable[Any]] | None = None,
+        label: str | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> _Reply:
+        """Faz um GET relativo a `/api/v4` (ou absoluto, só para o ícone). Único ponto de rede.
+
+        Sem `on_ok`, o corpo 2xx é lido como JSON. Com `on_ok`, ele recebe a
+        resposta aberta (streaming) e seu retorno vira `_Reply.data`. `label`
+        substitui `path` nas mensagens (para não repetir a URL absoluta).
+        """
+        shown = path if label is None else label
         for attempt in range(1, self._max_attempts + 1):
             last_attempt = attempt == self._max_attempts
             await self._limiter.acquire()
             try:
-                response = await self._http.get(path, params=params)
+                async with self._http.stream("GET", path, params=params, headers=headers) as response:
+                    outcome = await self._consume(response, shown, on_ok)
             except httpx.TimeoutException as exc:
                 if last_attempt:
                     raise GitLabUnavailableError(
-                        f"GET {path}: timeout após {self._max_attempts} tentativas",
+                        f"GET {shown}: timeout após {self._max_attempts} tentativas",
                         status_code=None,
-                        path=path,
+                        path=shown,
                     ) from None
                 reason = f"timeout ({type(exc).__name__})"
             except _TRANSIENT_NETWORK_ERRORS as exc:
@@ -559,63 +684,65 @@ class GitLabClient:
                 if tls_error is not None:
                     # Certificado recusado: repetir não resolve.
                     raise GitLabHTTPError(
-                        f"GET {path}: falha de TLS ({type(tls_error).__name__}); "
+                        f"GET {shown}: falha de TLS ({type(tls_error).__name__}); "
                         "confira GITLAB_URL e GITLAB_CA_BUNDLE",
                         status_code=None,
-                        path=path,
+                        path=shown,
                     ) from None
                 if last_attempt:
                     raise GitLabUnavailableError(
-                        f"GET {path}: erro de rede após {self._max_attempts} tentativas "
+                        f"GET {shown}: erro de rede após {self._max_attempts} tentativas "
                         f"({type(exc).__name__})",
                         status_code=None,
-                        path=path,
+                        path=shown,
                     ) from None
                 reason = f"erro de rede ({type(exc).__name__})"
             except httpx.RequestError as exc:
                 # Não transitórios (DecodingError, TooManyRedirects, UnsupportedProtocol,
                 # LocalProtocolError...): repetir não resolve. Sem retry.
                 raise GitLabHTTPError(
-                    f"GET {path}: falha na requisição ou na leitura da resposta "
+                    f"GET {shown}: falha na requisição ou na leitura da resposta "
                     f"({type(exc).__name__})",
                     status_code=None,
-                    path=path,
+                    path=shown,
                 ) from None
             else:
                 self._limiter.observe(response.headers)
                 status = response.status_code
 
                 if status < 300:
+                    if on_ok is not None:
+                        return _Reply(outcome, response.headers)
                     try:
                         return _Reply(response.json(), response.headers)
                     except ValueError:
                         raise GitLabHTTPError(
-                            f"GET {path}: resposta {status} sem JSON válido",
+                            f"GET {shown}: resposta {status} sem JSON válido",
                             status_code=status,
-                            path=path,
+                            path=shown,
                         ) from None
 
                 if status == 401:
                     raise GitLabAuthError("token do bot inválido, expirado ou revogado")
                 if status == 403:
                     raise GitLabForbiddenError(
-                        f"GET {path}: 403 sem permissão{_error_detail(response)}",
+                        f"GET {shown}: 403 sem permissão{_error_detail(response)}",
                         status_code=status,
-                        path=path,
+                        path=shown,
                     )
                 if status == 404:
                     raise GitLabNotFoundError(
-                        f"GET {path}: 404 não encontrado{_error_detail(response)}",
+                        f"GET {shown}: 404 não encontrado{_error_detail(response)}",
                         status_code=status,
-                        path=path,
+                        path=shown,
                     )
 
                 if status == 429:
                     if last_attempt:
                         raise GitLabRateLimitError(
-                            f"GET {path}: 429 após {self._max_attempts} tentativas",
+                            f"GET {shown}: 429 após {self._max_attempts} tentativas",
                             status_code=status,
-                            path=path,
+                            path=shown,
                         )
                     # O `Retry-After` manda; sem ele, o `RateLimit-Reset`. Piso de
                     # backoff: com o relógio local adiantado, o `Reset` pode já
@@ -630,33 +757,57 @@ class GitLabClient:
                     self._limiter.block_for(wait)
                     logger.warning(
                         "GitLab GET %s: 429; nova tentativa %d/%d em %.1fs",
-                        path, attempt + 1, self._max_attempts, wait,
+                        shown, attempt + 1, self._max_attempts, wait,
                     )
                     continue
 
                 if status >= 500:
                     if last_attempt:
                         raise GitLabUnavailableError(
-                            f"GET {path}: {status} após {self._max_attempts} tentativas",
+                            f"GET {shown}: {status} após {self._max_attempts} tentativas",
                             status_code=status,
-                            path=path,
+                            path=shown,
                         )
                     reason = f"HTTP {status}"
                 else:
                     raise GitLabHTTPError(
-                        f"GET {path}: HTTP {status}{_error_detail(response)}",
+                        f"GET {shown}: HTTP {status}{_error_detail(response)}",
                         status_code=status,
-                        path=path,
+                        path=shown,
                     )
 
             wait = self._backoff(attempt)
             logger.warning(
                 "GitLab GET %s: %s; nova tentativa %d/%d em %.1fs",
-                path, reason, attempt + 1, self._max_attempts, wait,
+                shown, reason, attempt + 1, self._max_attempts, wait,
             )
             await self._sleep(wait)
 
         raise AssertionError("inalcançável")  # pragma: no cover
+
+
+def sniff_image_type(data: bytes) -> str | None:
+    """Tipo da imagem pela assinatura dos bytes; `None` se não for raster permitido (SVG fica fora)."""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    if data.startswith(b"BM"):
+        return "image/bmp"
+    if data.startswith(b"\x00\x00\x01\x00"):
+        return "image/x-icon"
+    return None
+
+
+def _effective_port(parsed: Any) -> int:
+    """Porta explícita ou a padrão do esquema (443 para https, 80 para http)."""
+    if parsed.port is not None:
+        return parsed.port
+    return 443 if parsed.scheme.lower() == "https" else 80
 
 
 def _find_tls_error(exc: BaseException) -> ssl.SSLError | None:

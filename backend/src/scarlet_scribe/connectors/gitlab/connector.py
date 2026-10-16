@@ -13,6 +13,11 @@
   vão para `report.errors`, mas interrompem a busca.
 - MRs e commits: uma busca por repositório, com `report.parts` de uma entrada
   (`merge_requests` ou `commits`). Cada id (ou sha) sai uma vez por iteração.
+- Tags: `iter_tags` é sempre `full` (uma busca `tags`); completa e sem erros
+  autoriza exclusões. Cada nome sai uma vez.
+- Ícone: `fetch_avatar` valida `Repository.avatar_url` (mesmo host e porta do
+  `GITLAB_URL`) e baixa por `GET /projects/:id/avatar`, com tipo e tamanho limitados. Qualquer recusa ou falha
+  levanta `AvatarUnavailable(reason)`; 401 segue `GitLabAuthError`.
 - Registro com dado inválido (por exemplo, uma data que não converte) é
   descartado sozinho: vai para `report.discarded` com id e motivo, sem conteúdo.
 """
@@ -28,6 +33,7 @@ from typing import TYPE_CHECKING, Any, Self
 from pydantic import ValidationError
 
 from scarlet_scribe.connectors.base import (
+    AvatarUnavailable,
     BatchListing,
     FetchIssue,
     ListingMode,
@@ -37,6 +43,7 @@ from scarlet_scribe.connectors.base import (
 )
 from scarlet_scribe.connectors.gitlab.client import (
     GitLabAuthError,
+    GitLabAvatarRejected,
     GitLabClient,
     GitLabConfigError,
     GitLabError,
@@ -54,8 +61,10 @@ from scarlet_scribe.connectors.gitlab.mapper import (
     map_commit,
     map_merge_request,
     map_repository,
+    map_tag,
+    tag_ref,
 )
-from scarlet_scribe.domain.models import Commit, MergeRequest, Repository
+from scarlet_scribe.domain.models import Commit, MergeRequest, Repository, RepositoryAvatar, RepositoryTag
 
 if TYPE_CHECKING:
     from scarlet_scribe.config import Settings
@@ -249,6 +258,41 @@ class GitLabConnector:
             mode=mode,
         )
 
+    # --- Tags --------------------------------------------------------------
+
+    def iter_tags(self, repository_id: str) -> BatchListing[RepositoryTag]:
+        """Tags de um repositório. Sempre `full`; cada nome sai uma vez."""
+        repository_id = str(repository_id)
+
+        def convert(item: Any) -> RepositoryTag:
+            return map_tag(item, project_id=repository_id)
+
+        return BatchListing(
+            lambda report: self._batches(
+                report, "tags", "tag", repository_id,
+                self._client.iter_tag_pages(repository_id), convert,
+                key=lambda item: tag_ref(repository_id, item.name),
+            ),
+            mode=ListingMode.FULL,
+        )
+
+    # --- Ícone -------------------------------------------------------------
+
+    async def fetch_avatar(self, repository: Repository) -> RepositoryAvatar:
+        """Baixa o ícone do repositório. Recusas e falhas viram `AvatarUnavailable`."""
+        url = repository.avatar_url
+        if not url:
+            raise AvatarUnavailable("repositório sem avatar_url")
+        try:
+            content_type, data = await self._client.get_avatar(url, repository.external_id)
+        except (GitLabAuthError, GitLabConfigError):
+            raise
+        except GitLabAvatarRejected as exc:
+            raise AvatarUnavailable(exc.reason) from None
+        except GitLabError as exc:
+            raise AvatarUnavailable(f"download falhou: {exc}") from None
+        return RepositoryAvatar(content_type=content_type, data=data, source_url=url)
+
     # --- Núcleo das listagens por repositório ------------------------------
 
     async def _batches[T](
@@ -308,6 +352,8 @@ class GitLabConnector:
     def _canonical_invalid_id(resource: str, repository_id: str, raw_id: str | None) -> str | None:
         if raw_id is not None and resource == "commit":
             return commit_ref(repository_id, raw_id)
+        if raw_id is not None and resource == "tag":
+            return tag_ref(repository_id, raw_id)
         return raw_id
 
 

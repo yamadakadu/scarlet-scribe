@@ -13,6 +13,12 @@ Regras (ver `ARCHITECTURE.md` › "Fase M: multi-integração" › "Banco"):
 - O autor do MR vira uma `Person` (`source='gitlab'`, `external_id` = id do
   usuário, `username`, `email` = `public_email` só se vier preenchido). O
   autor do commit é a identidade do git (nome e e-mail), sem `Person`.
+- `RepositoryTag.external_id` = `<id do projeto>:<nome>`; `commit_sha` = `commit.id`
+  (nunca o `target`, que nas tags anotadas é o objeto tag). Tag sem `commit.id`
+  levanta `MappingError`; um sha fora de 40/64 hex minúsculos falha na validação
+  do modelo (`ValidationError`). O `raw` da tag guarda `name`, `target`,
+  `commit.id`, `created_at`, `protected` e `message` truncada a 200 caracteres.
+- `Repository.avatar_url` = `avatar_url` do projeto (nulo sem ícone).
 - `raw` = `model_dump(mode="json", exclude_unset=True)` do schema, que só tem os
   campos usados. Assignees e reviewers dos MRs ficam só aqui.
 """
@@ -27,6 +33,7 @@ from scarlet_scribe.connectors.gitlab.schemas import (
     GitLabMergeRequest,
     GitLabModel,
     GitLabProject,
+    GitLabTag,
     GitLabUser,
 )
 from scarlet_scribe.domain.models import (
@@ -35,11 +42,14 @@ from scarlet_scribe.domain.models import (
     MergeRequestState,
     Person,
     Repository,
+    RepositoryTag,
 )
 
 SOURCE = "gitlab"
 
 _SHORT_SHA_LENGTH = 8
+# `message` das tags anotadas pode ser longa: no `raw` fica truncada.
+_TAG_MESSAGE_RAW_LIMIT = 200
 
 
 class MappingError(ValueError):
@@ -108,6 +118,7 @@ def map_repository(project: GitLabProject) -> Repository:
         default_branch=project.default_branch,
         archived=project.archived,
         last_activity_at=parse_datetime(project.last_activity_at, field="last_activity_at"),
+        avatar_url=project.avatar_url,
         raw=raw_payload(project),
     )
 
@@ -167,4 +178,28 @@ def map_commit(commit: GitLabCommit, *, project_id: int | str) -> Commit:
         committed_at=parse_datetime(commit.committed_date, field="committed_date"),
         web_url=commit.web_url,
         raw=raw_payload(commit),
+    )
+
+
+def tag_ref(project_id: int | str, name: str) -> str:
+    """`external_id` canônico de uma tag: `<id do projeto>:<nome>`."""
+    return f"{project_id}:{name}"
+
+
+def map_tag(tag: GitLabTag, *, project_id: int | str) -> RepositoryTag:
+    if not tag.name.strip():
+        raise MappingError("name", "nome vazio")
+    if tag.commit is None or not tag.commit.id.strip():
+        raise MappingError("commit.id", "ausente")
+    raw = raw_payload(tag)
+    message = raw.get("message")
+    if isinstance(message, str) and len(message) > _TAG_MESSAGE_RAW_LIMIT:
+        raw["message"] = message[:_TAG_MESSAGE_RAW_LIMIT]
+    return RepositoryTag(
+        source=SOURCE,
+        external_id=tag_ref(project_id, tag.name),
+        external_repository_id=repository_ref(project_id),
+        name=tag.name,
+        commit_sha=tag.commit.id.strip(),
+        raw=raw,
     )

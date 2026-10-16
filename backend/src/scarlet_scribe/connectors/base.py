@@ -28,6 +28,8 @@ from scarlet_scribe.domain.models import (
     MergeRequest,
     Person,
     Repository,
+    RepositoryAvatar,
+    RepositoryTag,
     Task,
     Workspace,
 )
@@ -45,6 +47,19 @@ class ConnectorAuthError(ConnectorError):
 
 class ConnectorConfigError(ConnectorError):
     """Configuração ausente ou inválida (token, workspace)."""
+
+
+class AvatarUnavailable(ConnectorError):
+    """O ícone de um repositório não pôde ser obtido (recusado ou falhou).
+
+    `reason` diz o motivo, sem URL com credencial nem conteúdo. O sync conta em
+    `avatar_errors` e segue: o repositório fica sem ícone. Um 401 não vira
+    isto: continua `ConnectorAuthError`.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 # --- Relatório de uma listagem ---------------------------------------------
@@ -433,8 +448,33 @@ class CodeConnector(Protocol):
         """
         ...
 
+    def iter_tags(self, repository_id: str) -> BatchListing[RepositoryTag]:
+        """Tags de um repositório, em lotes. Sempre `full` (sem watermark).
+
+        - `external_id` = `<id do repositório>:<nome>`; `commit_sha` é o commit
+          apontado (`commit.id`), não o `target` da tag anotada.
+        - Uma listagem completa e sem erros autoriza exclusões
+          (`report.allows_deletions`). Cada nome sai no máximo uma vez.
+        - Tag inválida vai para `report.discarded`; erro de recurso (403/404)
+          para `report.errors`. `report.parts` tem a busca `tags`.
+        """
+        ...
+
+    async def fetch_avatar(self, repository: Repository) -> RepositoryAvatar:
+        """Baixa o ícone de `repository.avatar_url` (só GET, com o token do bot).
+
+        Levanta `AvatarUnavailable` (com o motivo) quando o repositório não tem
+        `avatar_url`, quando a URL é recusada (host/porta diferentes do da
+        origem, esquema inseguro), quando o tipo não é imagem raster permitida,
+        quando passa de 512 KB ou quando o download falha (403/404/5xx...). O
+        token nunca vai para outro host. `ConnectorAuthError` (401) e
+        `ConnectorConfigError` propagam.
+        """
+        ...
+
 
 __all__ = [
+    "AvatarUnavailable",
     "BatchListing",
     "CodeConnector",
     "Connector",
