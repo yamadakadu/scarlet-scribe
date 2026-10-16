@@ -612,3 +612,51 @@ th {
   color: var(--error);
   border-color: currentColor;
 }
+
+.repo-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 0.5rem;
+  border-radius: 4px;
+  vertical-align: middle;
+  object-fit: cover;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--pill-fg);
+  background: var(--pill-bg);
+}
+.repo-avatar--gray { --pill-fg: var(--pill-gray-fg); --pill-bg: var(--pill-gray-bg); }
+.repo-avatar--blue { --pill-fg: var(--pill-blue-fg); --pill-bg: var(--pill-blue-bg); }
+.repo-avatar--green { --pill-fg: var(--pill-green-fg); --pill-bg: var(--pill-green-bg); }
+.repo-avatar--red { --pill-fg: var(--pill-red-fg); --pill-bg: var(--pill-red-bg); }
+.repo-avatar--amber { --pill-fg: var(--pill-amber-fg); --pill-bg: var(--pill-amber-bg); }
+
+.commit-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-left: 0.5rem;
+  vertical-align: middle;
+}
+.commit-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  max-width: 100%;
+  padding: 0 0.5rem 0 0.35rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  text-transform: none;
+  --pill-fg: var(--pill-blue-fg);
+  --pill-bg: var(--pill-blue-bg);
+}
+.commit-tag svg {
+  flex: none;
+  width: 0.8rem;
+  height: 0.8rem;
+}

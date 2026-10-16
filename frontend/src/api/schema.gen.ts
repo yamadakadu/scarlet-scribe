@@ -235,6 +235,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/repositories/{repository_id}/avatar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Repository Avatar
+         * @description Ícone do repositório, lido do banco (baixado no sync).
+         */
+        get: operations["get_repository_avatar"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/merge-requests": {
         parameters: {
             query?: never;
@@ -301,6 +321,11 @@ export interface components {
             /** Web Url */
             web_url: string | null;
             repository: components["schemas"]["RepositoryRef"];
+            /**
+             * Tags
+             * @description Tags do commit, por nome; vazio se não houver
+             */
+            tags: string[];
         };
         /** CommitPage */
         CommitPage: {
@@ -492,6 +517,11 @@ export interface components {
             archived: boolean;
             /** Last Activity At */
             last_activity_at: string | null;
+            /**
+             * Avatar Updated At
+             * @description Quando o ícone foi baixado; null se o repositório não tem ícone
+             */
+            avatar_updated_at: string | null;
         };
         /** RepositoryPage */
         RepositoryPage: {
@@ -1199,6 +1229,55 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RepositoryPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Banco de dados indisponível */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+        };
+    };
+    get_repository_avatar: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                repository_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Bytes do ícone, com o content-type guardado */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/*": string;
+                };
+            };
+            /** @description Repositório inexistente, removido ou sem ícone */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
                 };
             };
             /** @description Validation Error */
