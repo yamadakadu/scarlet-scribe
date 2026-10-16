@@ -117,6 +117,9 @@ class Repository(SourceRecord):
     )
     archived: bool = False
     last_activity_at: AwareDatetime | None = None
+    avatar_url: str | None = Field(
+        default=None, description="URL do ícone na origem; nulo sem ícone"
+    )
 
 
 class MergeRequest(SourceRecord):
@@ -172,6 +175,32 @@ class Commit(SourceRecord):
     web_url: str | None = None
 
 
+class RepositoryTag(SourceRecord):
+    """Tag de um repositório. `external_id` é '<id do repositório>:<nome>'.
+
+    `commit_sha` é o commit apontado (`commit.id` na origem, não o `target` da
+    tag anotada). Não há vínculo com `Commit`: o commit pode estar fora da
+    janela do sync.
+    """
+
+    external_repository_id: str = Field(description="Id na origem do repositório")
+    name: str
+    commit_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+
+
+class RepositoryAvatar(BaseModel):
+    """Ícone de repositório já baixado pelo conector (bytes), para o sync gravar.
+
+    Não é um `SourceRecord`: não tem `external_id` nem `raw`; pertence ao
+    repositório e é guardado em `repository_avatars`. O conector já validou
+    host, tipo e tamanho.
+    """
+
+    content_type: str
+    data: bytes
+    source_url: str = Field(description="URL de onde veio (o `avatar_url` do repositório)")
+
+
 __all__ = [
     "Commit",
     "Container",
@@ -180,6 +209,8 @@ __all__ = [
     "MergeRequestState",
     "Person",
     "Repository",
+    "RepositoryAvatar",
+    "RepositoryTag",
     "SourceRecord",
     "Task",
     "Workspace",

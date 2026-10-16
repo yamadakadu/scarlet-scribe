@@ -11,6 +11,7 @@ from typing import Any
 from sqlalchemy import (
     BigInteger,
     Column,
+    LargeBinary,
     ForeignKey,
     Index,
     String,
@@ -151,11 +152,32 @@ class RepositoryRow(SyncedMixin, Base):
     default_branch: Mapped[str | None] = mapped_column(Text)
     archived: Mapped[bool] = mapped_column(server_default=text("false"))
     last_activity_at: Mapped[datetime | None]
+    avatar_url: Mapped[str | None] = mapped_column(Text)
 
     merge_requests: Mapped[list["MergeRequestRow"]] = relationship(
         back_populates="repository"
     )
     commits: Mapped[list["CommitRow"]] = relationship(back_populates="repository")
+    tags: Mapped[list["RepositoryTagRow"]] = relationship(back_populates="repository")
+    avatar: Mapped["RepositoryAvatarRow | None"] = relationship(
+        back_populates="repository", uselist=False
+    )
+
+
+class RepositoryAvatarRow(Base):
+    """Ícone baixado no sync (bytes); a API serve daqui, sem chamar o GitLab."""
+
+    __tablename__ = "repository_avatars"
+
+    repository_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("repositories.id", ondelete="CASCADE"), primary_key=True
+    )
+    source_url: Mapped[str] = mapped_column(Text)
+    content_type: Mapped[str] = mapped_column(Text)
+    data: Mapped[bytes] = mapped_column(LargeBinary)
+    fetched_at: Mapped[datetime]
+
+    repository: Mapped[RepositoryRow] = relationship(back_populates="avatar")
 
 
 class MergeRequestRow(SyncedMixin, Base):
@@ -219,6 +241,27 @@ class CommitRow(SyncedMixin, Base):
     web_url: Mapped[str | None] = mapped_column(Text)
 
     repository: Mapped[RepositoryRow] = relationship(back_populates="commits")
+
+
+class RepositoryTagRow(SyncedMixin, Base):
+    """Tag de repositório. `external_id` é '<id do projeto>:<nome>'.
+
+    `commit_sha` não tem FK para `commits` (o commit pode estar fora da janela).
+    """
+
+    __tablename__ = "repository_tags"
+
+    __table_args__ = (
+        UniqueConstraint("source", "external_id"),
+        UniqueConstraint("repository_id", "name"),
+        Index("ix_repository_tags_repository_id_commit_sha", "repository_id", "commit_sha"),
+    )
+
+    repository_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("repositories.id"))
+    name: Mapped[str] = mapped_column(Text)
+    commit_sha: Mapped[str] = mapped_column(Text)
+
+    repository: Mapped[RepositoryRow] = relationship(back_populates="tags")
 
 
 class SyncRunRow(Base):

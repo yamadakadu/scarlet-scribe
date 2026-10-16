@@ -4,6 +4,8 @@ from scarlet_scribe.db.base import Base
 from scarlet_scribe.db.models import (
     ContainerRow,
     PersonRow,
+    RepositoryAvatarRow,
+    RepositoryTagRow,
     SyncRunRow,
     SyncStateRow,
     TaskRow,
@@ -16,6 +18,8 @@ __all__ = [
     "Base",
     "ContainerRow",
     "PersonRow",
+    "RepositoryAvatarRow",
+    "RepositoryTagRow",
     "SyncRunRow",
     "SyncStateRow",
     "TaskRow",
