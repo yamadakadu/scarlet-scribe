@@ -502,16 +502,16 @@ Decisões do Carlos (2026-10-15). A plataforma passa a reunir várias ferramenta
 ### Navegação por app (front)
 
 - Uma **barra lateral** à esquerda lista só os aplicativos, cada um com o seu ícone (SVG inline, paths do Simple Icons, licença CC0), sem os grupos de telas de cada app. O nome do app vai em `title` e `aria-label`.
-- O app ativo fica destacado. As abas dele (no ClickUp: Tarefas, Arquivadas, Marcos e Projetos) ficam no header, ao lado de `ApiStatus` e `SyncButton`.
+- O app ativo fica destacado. As abas dele (no ClickUp: Projetos, Tarefas, Arquivadas e Marcos; no GitLab: Repositórios, Merge Requests e Commits) ficam no header, ao lado de `ApiStatus` e `SyncButton`.
 - Um registro estático em `frontend/src/apps.ts` define, para cada app, `id`, `label`, `icon`, `basePath`, `nav` e `enabled`. **Desde a FM-08, o `enabled` vem de `GET /sources`.** Enquanto `/sources` carrega ou se falhar, vale o `enabled` estático, com o GitLab desabilitado. O `title` do item mostra o último sync ("nunca sincronizado" quando `null`) ou "não configurado".
 - As rotas têm o prefixo do app:
   - ClickUp: `/clickup/tarefas`, `/clickup/tarefas/:id`, `/clickup/arquivadas`, `/clickup/marcos` e `/clickup/projetos`;
-  - GitLab: `/gitlab/merge-requests`, `/gitlab/commits` e `/gitlab/repositorios`, com `/gitlab` levando a `/gitlab/merge-requests`.
+  - GitLab: `/gitlab/merge-requests`, `/gitlab/commits` e `/gitlab/repositorios`, com `/gitlab` levando a `/gitlab/repositorios`.
 
-  As rotas antigas redirecionam para as novas, e `/` vai para `/clickup/tarefas`.
-- **Telas do GitLab (FM-08):** os filtros ficam na URL, e mudar um filtro volta à página 1; a paginação é de 50 por página.
+  As rotas antigas redirecionam para as novas, e `/` e `/clickup` vão para `/clickup/projetos`: cada app abre na primeira aba (decisão do Carlos, 2026-10-15).
+- **Telas do GitLab (FM-08):** os filtros ficam na URL, e mudar um filtro volta à página 1; a paginação é de 50 por página, exceto em Commits.
   - **Merge Requests:** filtros de repositório, estado (padrão "Abertos", sem parâmetro na URL, e "Todos" com `estado=todos`, que não manda `state`) e busca.
-  - **Commits:** filtros de repositório, período e busca.
+  - **Commits:** filtros de repositório, período e busca; seletor de 10, 25, 50 ou 100 por página (padrão 25, `por_pagina` na URL só quando diferente) e botão de copiar o sha.
   - **Repositórios:** a alternância "Mostrar só arquivados" (`archived=true`) e o link "Ver", que abre os MRs do repositório com "Todos".
 - O "Sincronizar agora" continua global (as duas fontes) e, depois de um sync, recarrega também `sources`, `repositories`, `merge-requests` e `commits`.
 - Em telas estreitas, a barra lateral vira uma faixa de ícones no topo.
@@ -635,6 +635,22 @@ Seguem as convenções de "API HTTP": prefixo `/api/v1`, `{ items, total }`, `li
   - nulos de `authored_at` vão para o fim, e o `id` desempata.
 - MRs e commits de um repositório removido não aparecem.
 - **`/people` ganha `source`** (padrão `clickup`), para que os autores do GitLab não apareçam nas telas do ClickUp. `?source=gitlab` lista só os do GitLab.
+
+### Tags e ícones dos repositórios (Melhorias, rodada 1)
+
+Spike ML-01 (2026-10-15, `backend/scripts/gitlab_spike.py --tags-avatar`, gitlab.com, 3 projetos privados):
+- **Tags:** `GET /projects/:id/repository/tags` responde 200 com `read_api` e pagina como as outras listagens (`X-Next-Page` vazio na última página). Cada tag traz `name`, `message`, `target`, `protected`, `created_at` (UTC), `release` e `commit` (objeto completo do commit). Nas tags anotadas, `target` é o sha do **objeto tag**, diferente de `commit.id`: a ligação com o commit usa sempre `commit.id`. Tags leves não foram vistas **(a confirmar)**.
+- **Ícone:** `avatar_url` vem nos dois endpoints de projeto, `null` sem ícone, ou uma URL absoluta `{GITLAB_URL}/uploads/-/system/project/avatar/<id>/<arquivo>`. **Em projeto privado, o GET sem token dá 401**: um `<img>` direto no navegador não funciona.
+
+Decisões do Carlos (2026-10-15):
+- **Ícones baixados no sync.** O worker baixa a imagem com o token do bot e grava os bytes no banco; a API serve do banco, sem chamar o GitLab.
+  - O conector só baixa URLs no **mesmo host** de `GITLAB_URL` (o token nunca vai para outro host), aceita só `image/png`, `image/jpeg`, `image/gif`, `image/webp`, `image/bmp`, `image/x-icon` e `image/vnd.microsoft.icon` (SVG fica de fora) e até 512 KB. Fora disso, o ícone é ignorado com `warning`.
+  - O sync só baixa de novo quando o `avatar_url` muda; com `avatar_url` nulo, apaga o ícone guardado. Uma falha ao baixar não deixa o run `partial`: conta em `stats.gitlab.avatar_errors` e o repositório fica sem ícone.
+  - Banco: `repositories.avatar_url` (texto, nulo) e a tabela `repository_avatars` (`repository_id` PK e FK com `ON DELETE CASCADE`, `source_url`, `content_type`, `data` bytea, `fetched_at`).
+  - API: o item de `GET /repositories` ganha `avatar_updated_at` (o `fetched_at`, ou `null` sem ícone; o `avatar_url` do GitLab não sai). `GET /repositories/{id}/avatar` devolve os bytes com o `content_type` guardado, `X-Content-Type-Options: nosniff` e `Cache-Control: private, max-age=86400`, ou 404. O front usa `/api/v1/repositories/{id}/avatar?v=<avatar_updated_at>` e, sem ícone ou se a imagem falhar, mostra um quadrado com a inicial.
+- **Tags dos commits.** Tabela `repository_tags` com as convenções das sincronizadas: `external_id` = `<id do projeto>:<nome>`, `repository_id` (FK), `name` e `commit_sha`, `UNIQUE (repository_id, name)` e índice em `(repository_id, commit_sha)`, sem FK para `commits` (o commit pode estar fora da janela de 365 dias).
+  - Sync: depois dos commits, em cada repositório não arquivado e com `default_branch`, uma listagem completa a cada run (sem watermark); upsert por `(source, external_id)` e `deleted_at` nas que não voltaram, só com `allows_deletions`. Um 403/404 sem nada recebido é "recurso indisponível". `stats.gitlab` ganha `tags` e `tag_listings`.
+  - API: o item de `GET /commits` ganha `tags: string[]` (tags não removidas do mesmo `(repository_id, sha)`, por nome), numa subconsulta agregada, sem N+1.
 
 ## Estrutura do repositório (alvo)
 

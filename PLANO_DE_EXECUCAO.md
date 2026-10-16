@@ -201,6 +201,21 @@ A FM-01 roda em paralelo à F1-11 e não depende do GitLab. A conferência visua
 
 **Fora da Fase M:** cruzar dados entre apps (por exemplo, MRs que citam uma tarefa do ClickUp), a escrita pontual nas ferramentas (quais pontos, qual token, auditoria e a mudança das regras), o Discord e outros apps, e o uso de tokens por pessoa no GitLab (a decidir junto com a Fase 2).
 
+## Melhorias (rodada 1)
+
+Ajustes pedidos pelo Carlos (2026-10-15), lidos pelo Maestro numa lista própria. Decisões do Carlos: os filtros continuam na URL; cada app abre na primeira aba; a tarefa abre só em modal (o drawer fica como preferência futura, sem tela cheia), com a URL `/clickup/tarefas/:id`; commits com 25 por página por padrão (10, 25, 50 ou 100).
+
+| ID | Tarefa | Agente | Depende de | Onda | Entregável e critério de pronto |
+|---|---|---|---|---|---|
+| ML-01 | Spike curto: `GET /projects/:id/repository/tags` (`name`, `target`, `commit.id`, tag anotada) e `avatar_url` dos projetos (formato, nulo sem ícone, carrega sem autenticação em projeto privado?) | Batedor | — | A | Relatório com a evidência. O Maestro atualiza o `ARCHITECTURE.md` |
+| ML-02 | Ajustes visuais: links sem sublinhado; `ExternalLink` com seta ↗ em SVG; navegação interna com ícone; badges em maiúsculas para Status (por `status_type`) e Prioridade; abas do GitLab com Repositórios primeiro; `/`, `/clickup` → Projetos e `/gitlab` → Repositórios; sem contador em Repositórios; commits com seletor 10/25/50/100 (padrão 25, `por_pagina`) e botão de copiar o sha | Vitrine | — | A | typecheck, lint e build passam; conferido pelo Maestro no diff |
+| ML-03 | Tarefa em modal (`<dialog>`), com a lista de origem atrás, `/clickup/tarefas/:id` direto mostra Tarefas no fundo, Voltar e Esc fecham; preferência `taskOpenMode` (`modal` padrão, `drawer`) em `lib/preferences.ts`; sem tela cheia | Vitrine | ML-02 | B | typecheck, lint e build; abrir, fechar, Esc, Voltar, F5 e subtarefa funcionam; Revisor |
+| ML-04 | `Repository.avatar_url`, modelo `RepositoryTag` e migration `0004` (`repositories.avatar_url` e as tabelas `repository_avatars` e `repository_tags`; `ARCHITECTURE.md` › "Tags e ícones dos repositórios") | Arquivista | ML-01 | B | `alembic upgrade head` e `downgrade -1` limpos; Revisor |
+| ML-05 | `avatar_url` no conector, download do ícone (só GET, mesmo host de `GITLAB_URL`, tipos e tamanho limitados) e `iter_tags(repository_id)` (listagem `full`) | Conector | ML-04 | B | Script imprime tags no formato canônico; Revisor |
+| ML-06 | Passos de ícones (baixa só quando o `avatar_url` muda; falha não deixa `partial`) e de tags no `SyncService` (completo a cada run, exclusões com `allows_deletions`, "recurso indisponível" no 403/404) | Sincronista | ML-05 | C | Sync `succeeded` com tags; segundo sync não duplica; Revisor |
+| ML-07 | `avatar_updated_at` em `GET /repositories`, `GET /repositories/{id}/avatar` (do banco) e `tags: string[]` em `GET /commits` | Portal | ML-04 | C | `curl` nas duas rotas; OpenAPI gerado; Revisor |
+| ML-08 | Ícone (de `/repositories/{id}/avatar`, ou a inicial) nos repositórios e tags como badges nos commits; cliente TS regenerado | Vitrine | ML-07 | D | typecheck, lint e build; conferido pelo Maestro no diff |
+
 ## Fase 2: autenticação e horas (à parte)
 
 Só começa depois da F1-11. Esta tabela é uma visão prévia e será detalhada quando a Fase 2 for liberada.
@@ -246,3 +261,11 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 | FM-09 | pendente | |
 | FM-10 | pendente | |
 | FM-11 | pendente | Só se a FM-02 começar no gitlab.com |
+| ML-01 | integrado | Branch `batedor/spike-tags-avatar` (78248d1), integrada em 2378768. Ícone de projeto privado dá 401 sem token; o Carlos decidiu baixar os ícones no sync |
+| ML-02 | integrado | Branch `vitrine/ajustes-visuais` (58140a4), conferida pelo Maestro no diff |
+| ML-03 | em andamento | Branch `vitrine/modal-tarefa` |
+| ML-04 | em andamento | Branch `arquivista/avatar-tags` |
+| ML-05 | pendente | |
+| ML-06 | pendente | |
+| ML-07 | pendente | |
+| ML-08 | pendente | |
