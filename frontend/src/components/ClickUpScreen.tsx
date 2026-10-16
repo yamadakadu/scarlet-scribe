@@ -29,7 +29,7 @@ export function ClickUpScreen() {
 
   const bgPath = id ? (background?.pathname ?? clickupPaths.tasks) : location.pathname
   const bgSearch = id ? (background?.search ?? '') : location.search
-  const Page = PAGES[bgPath] ?? TasksPage
+  const Page = PAGES[bgPath.replace(/\/+$/, '')] ?? TasksPage
 
   return (
     <>

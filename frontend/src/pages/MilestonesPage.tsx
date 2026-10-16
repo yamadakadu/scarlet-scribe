@@ -1,10 +1,10 @@
+import { Link } from 'react-router'
+import type { Task } from '../api/client.ts'
 import { useMilestones, useProjects } from '../api/queries.ts'
 import { endOfLocalDay, formatLongDay, isValidDay, localDay, startOfLocalDay } from '../lib/dates.ts'
 import { useUrlFilters } from '../lib/params.ts'
-import { useTaskLink } from '../lib/taskLink.ts'
-import { Link } from 'react-router'
 import { flattenProjects } from '../lib/projects.ts'
-import type { Task } from '../api/client.ts'
+import { useTaskLink } from '../lib/taskLink.ts'
 
 /** Marcos agrupados pelo dia local do prazo. Filtros na URL: projeto, de, ate. */
 export function MilestonesPage() {

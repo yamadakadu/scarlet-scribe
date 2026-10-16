@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useLayoutEffect, useRef } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router'
 import { clickupPaths } from '../apps.ts'
 import { ArrowLeftIcon, CloseIcon } from '../assets/icons/UiIcons.tsx'
@@ -15,19 +15,39 @@ export function TaskModal() {
   const location = useLocation()
   const navigate = useNavigate()
   const ref = useRef<HTMLDialogElement>(null)
+  const downOnBackdrop = useRef(false)
   const { background, depth } = readModalState(location.state)
 
-  useEffect(() => {
+  // Layout effect: o cleanup roda antes de o <dialog> sair do DOM, então o foco volta ao link de origem.
+  useLayoutEffect(() => {
     const dialog = ref.current
+    const prev = document.activeElement
     if (dialog && !dialog.open) dialog.showModal()
-    return () => dialog?.close()
+    return () => {
+      dialog?.close()
+      if (prev instanceof HTMLElement && prev.isConnected) prev.focus()
+    }
   }, [])
 
-  // Com fundo: desfaz as entradas empilhadas pelo modal. Sem fundo (acesso direto): vai às tarefas.
-  const close = useCallback(() => {
-    if (background) navigate(-depth)
-    else navigate(clickupPaths.tasks, { replace: true })
-  }, [background, depth, navigate])
+  // Desfaz as entradas de histórico empilhadas pelo modal e, se houver destino, o
+  // substitui na entrada restante (assim o Voltar seguinte não reabre uma tarefa).
+  const leave = useCallback(
+    (to?: string) => {
+      // Com fundo, a entrada anterior à primeira tarefa é a lista; sem fundo, a primeira tarefa é a entrada inicial.
+      const steps = background ? depth : depth - 1
+      const target = background ? to : (to ?? clickupPaths.tasks)
+      if (steps === 0) {
+        if (target) navigate(target, { replace: true })
+        return
+      }
+      if (target) {
+        window.addEventListener('popstate', () => navigate(target, { replace: true }), { once: true })
+      }
+      navigate(-steps)
+    },
+    [background, depth, navigate],
+  )
+  const close = useCallback(() => leave(), [leave])
 
   return (
     <dialog
@@ -38,8 +58,12 @@ export function TaskModal() {
         e.preventDefault()
         close()
       }}
+      onMouseDown={(e) => {
+        downOnBackdrop.current = e.target === e.currentTarget
+      }}
       onClick={(e) => {
-        if (e.target === e.currentTarget) close()
+        if (downOnBackdrop.current && e.target === e.currentTarget) close()
+        downOnBackdrop.current = false
       }}
     >
       <div className="task-dialog-inner">
@@ -56,7 +80,7 @@ export function TaskModal() {
             <CloseIcon />
           </button>
         </div>
-        <TaskDetail id={id} onClose={close} />
+        <TaskDetail id={id} onClose={close} onLeaveTo={leave} />
       </div>
     </dialog>
   )

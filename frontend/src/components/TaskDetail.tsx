@@ -11,7 +11,7 @@ import { TaskTable } from './TaskTable.tsx'
 export const TASK_TITLE_ID = 'task-detail-title'
 
 /** Conteúdo da tarefa (mostrado dentro do modal/painel). */
-export function TaskDetail({ id, onClose }: { id: string; onClose: () => void }) {
+export function TaskDetail({ id, onClose, onLeaveTo }: { id: string; onClose: () => void; onLeaveTo: (to: string) => void }) {
   const task = useTask(id)
   const taskLink = useTaskLink()
 
@@ -44,7 +44,15 @@ export function TaskDetail({ id, onClose }: { id: string; onClose: () => void })
     {
       k: 'Projeto',
       v: t.container ? (
-        <Link to={clickupPaths.tasksOfProject(t.container.id)} replace>
+        <Link
+          to={clickupPaths.tasksOfProject(t.container.id)}
+          onClick={(e) => {
+            // Clique simples: fecha o modal e filtra; Ctrl/botão do meio seguem o link normal.
+            if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+            e.preventDefault()
+            onLeaveTo(clickupPaths.tasksOfProject(t.container!.id))
+          }}
+        >
           {t.container.name}
         </Link>
       ) : (
