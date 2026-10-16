@@ -1,15 +1,12 @@
 import { createBrowserRouter, Navigate } from 'react-router'
 import { CLICKUP, CLICKUP_ROUTES, clickupPaths, GITLAB, GITLAB_ROUTES, gitlabPaths } from './apps.ts'
+import { ClickUpScreen } from './components/ClickUpScreen.tsx'
 import { LegacyRedirect } from './components/LegacyRedirect.tsx'
 import { Layout } from './components/Layout.tsx'
 import { CommitsPage } from './pages/CommitsPage.tsx'
 import { MergeRequestsPage } from './pages/MergeRequestsPage.tsx'
 import { RepositoriesPage } from './pages/RepositoriesPage.tsx'
-import { MilestonesPage } from './pages/MilestonesPage.tsx'
 import { NotFoundPage } from './pages/NotFoundPage.tsx'
-import { ProjectsPage } from './pages/ProjectsPage.tsx'
-import { TaskDetailPage } from './pages/TaskDetailPage.tsx'
-import { TasksPage } from './pages/TasksPage.tsx'
 
 export const router = createBrowserRouter([
   {
@@ -21,11 +18,12 @@ export const router = createBrowserRouter([
         path: CLICKUP.basePath.slice(1),
         children: [
           { index: true, element: <Navigate to={clickupPaths.projects} replace /> },
-          { path: CLICKUP_ROUTES.tasks, element: <TasksPage /> },
-          { path: `${CLICKUP_ROUTES.tasks}/:id`, element: <TaskDetailPage /> },
-          { path: CLICKUP_ROUTES.archived, element: <TasksPage archived /> },
-          { path: CLICKUP_ROUTES.milestones, element: <MilestonesPage /> },
-          { path: CLICKUP_ROUTES.projects, element: <ProjectsPage /> },
+          // Mesmo elemento em todas as rotas: a tela de fundo não remonta ao abrir a tarefa.
+          { path: CLICKUP_ROUTES.tasks, element: <ClickUpScreen /> },
+          { path: `${CLICKUP_ROUTES.tasks}/:id`, element: <ClickUpScreen /> },
+          { path: CLICKUP_ROUTES.archived, element: <ClickUpScreen /> },
+          { path: CLICKUP_ROUTES.milestones, element: <ClickUpScreen /> },
+          { path: CLICKUP_ROUTES.projects, element: <ClickUpScreen /> },
         ],
       },
       {
