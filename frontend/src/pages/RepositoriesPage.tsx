@@ -4,6 +4,7 @@ import { gitlabPaths } from '../apps.ts'
 import { ChevronRightIcon } from '../assets/icons/UiIcons.tsx'
 import { ExternalLink } from '../components/ExternalLink.tsx'
 import { Pager } from '../components/Pager.tsx'
+import { RepoAvatar } from '../components/RepoAvatar.tsx'
 import { formatDateTime } from '../lib/dates.ts'
 import { useUrlFilters } from '../lib/params.ts'
 
@@ -51,6 +52,7 @@ export function RepositoriesPage() {
                   {repos.data.items.map((r) => (
                     <tr key={r.id}>
                       <td>
+                        <RepoAvatar id={r.id} name={r.path_with_namespace} avatarUpdatedAt={r.avatar_updated_at} />
                         {r.web_url ? (
                           <ExternalLink href={r.web_url}>{r.path_with_namespace}</ExternalLink>
                         ) : (

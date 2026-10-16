@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useCommits, useRepositories } from '../api/queries.ts'
-import { CheckIcon, CopyIcon } from '../assets/icons/UiIcons.tsx'
+import { CheckIcon, CopyIcon, TagIcon } from '../assets/icons/UiIcons.tsx'
 import { ExternalLink } from '../components/ExternalLink.tsx'
 import { Pager } from '../components/Pager.tsx'
 import { formatDateTime, isValidDay } from '../lib/dates.ts'
@@ -146,7 +146,19 @@ export function CommitsPage() {
                         )}
                         <CopyShaButton sha={c.sha} />
                       </td>
-                      <td>{c.title}</td>
+                      <td>
+                        {c.title}
+                        {c.tags.length > 0 && (
+                          <span className="commit-tags">
+                            {c.tags.map((t) => (
+                              <span key={t} className="pill commit-tag" title={`Tag ${t}`}>
+                                <TagIcon />
+                                {t}
+                              </span>
+                            ))}
+                          </span>
+                        )}
+                      </td>
                       <td>{c.repository.name}</td>
                       <td>{c.author_name ?? '—'}</td>
                       <td>{formatDateTime(c.authored_at)}</td>

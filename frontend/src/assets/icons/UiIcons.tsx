@@ -44,6 +44,13 @@ export const CheckIcon: IconComponent = (props) => (
   </svg>
 )
 
+export const TagIcon: IconComponent = (props) => (
+  <svg {...stroke} {...props}>
+    <path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z" />
+    <circle cx="8" cy="8" r="1.5" />
+  </svg>
+)
+
 export const CloseIcon: IconComponent = (props) => (
   <svg {...stroke} {...props}>
     <path d="M6 6l12 12M18 6 6 18" />
