@@ -185,7 +185,7 @@ class RepositoryTag(SourceRecord):
 
     external_repository_id: str = Field(description="Id na origem do repositório")
     name: str
-    commit_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    commit_sha: str = Field(pattern=r"^[0-9a-f]{40}([0-9a-f]{24})?$")
 
 
 class RepositoryAvatar(BaseModel):

@@ -11,9 +11,9 @@ from typing import Any
 from sqlalchemy import (
     BigInteger,
     Column,
-    LargeBinary,
     ForeignKey,
     Index,
+    LargeBinary,
     String,
     Table,
     Text,
