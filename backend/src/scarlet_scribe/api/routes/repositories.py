@@ -1,8 +1,7 @@
-"""`GET /repositories`: repositórios de código."""
+"""`GET /repositories` e `GET /repositories/{id}/avatar`: repositórios de código e o ícone."""
 
 import uuid
 from typing import Annotated
-
 
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import func, or_, select
@@ -14,6 +13,19 @@ from scarlet_scribe.api.schemas import ErrorDetail, RepositoryOut, RepositoryPag
 from scarlet_scribe.db.models import RepositoryAvatarRow, RepositoryRow
 
 router = APIRouter(tags=["repositories"])
+
+# Tipos de imagem que a rota do ícone aceita servir (SVG fica de fora).
+AVATAR_CONTENT_TYPES = frozenset(
+    {
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/webp",
+        "image/bmp",
+        "image/x-icon",
+        "image/vnd.microsoft.icon",
+    }
+)
 
 
 @router.get("/repositories", response_model=RepositoryPage)
@@ -83,7 +95,7 @@ async def get_repository_avatar(session: SessionDep, repository_id: uuid.UUID) -
         .join(RepositoryRow, RepositoryRow.id == RepositoryAvatarRow.repository_id)
         .where(RepositoryAvatarRow.repository_id == repository_id, RepositoryRow.deleted_at.is_(None))
     )
-    if avatar is None:
+    if avatar is None or avatar.content_type not in AVATAR_CONTENT_TYPES:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Ícone não encontrado")
     return Response(
         content=avatar.data,
@@ -91,5 +103,6 @@ async def get_repository_avatar(session: SessionDep, repository_id: uuid.UUID) -
         headers={
             "X-Content-Type-Options": "nosniff",
             "Cache-Control": "private, max-age=86400",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
         },
     )
