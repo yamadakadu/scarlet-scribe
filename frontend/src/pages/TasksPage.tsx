@@ -1,8 +1,8 @@
-import { useSearchParams } from 'react-router'
 import type { TaskOrder } from '../api/client.ts'
 import { usePeople, useProjects, useTasks } from '../api/queries.ts'
 import { TaskTable } from '../components/TaskTable.tsx'
 import { isValidDay } from '../lib/dates.ts'
+import { useUrlFilters } from '../lib/params.ts'
 import { flattenProjects } from '../lib/projects.ts'
 
 const PAGE_SIZE = 50
@@ -18,7 +18,7 @@ const ORDERS: { value: TaskOrder; label: string }[] = [
  * `archived` escolhe entre a lista ativa e a seção de arquivadas.
  */
 export function TasksPage({ archived = false }: { archived?: boolean }) {
-  const [params, setParams] = useSearchParams()
+  const { params, set, clear } = useUrlFilters()
   const q = params.get('q') ?? ''
   const status = params.get('status') ?? ''
   const pessoa = params.get('pessoa') ?? ''
@@ -47,19 +47,6 @@ export function TasksPage({ archived = false }: { archived?: boolean }) {
     limit: PAGE_SIZE,
     offset: (pagina - 1) * PAGE_SIZE,
   })
-
-  // Muda um filtro e volta para a primeira página.
-  const set = (key: string, value: string) =>
-    setParams(
-      (prev) => {
-        const next = new URLSearchParams(prev)
-        if (value) next.set(key, value)
-        else next.delete(key)
-        if (key !== 'pagina') next.delete('pagina')
-        return next
-      },
-      { replace: true },
-    )
 
   const flat = projects.data ? flattenProjects(projects.data.items) : []
   const hasFilters = [...params.keys()].length > 0
@@ -125,7 +112,7 @@ export function TasksPage({ archived = false }: { archived?: boolean }) {
           Incluir encerradas
         </label>
         {hasFilters && (
-          <button type="button" onClick={() => setParams({}, { replace: true })}>
+          <button type="button" onClick={clear}>
             Limpar filtros
           </button>
         )}
