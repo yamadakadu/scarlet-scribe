@@ -659,6 +659,7 @@ th {
   flex: none;
   width: 0.8rem;
   height: 0.8rem;
+}
 
 /* Tarefa em modal / painel lateral */
 body:has(dialog.task-dialog[open]) {
