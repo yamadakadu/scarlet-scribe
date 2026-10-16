@@ -515,6 +515,7 @@ Decisões do Carlos (2026-10-15). A plataforma passa a reunir várias ferramenta
   - **Repositórios:** a alternância "Mostrar só arquivados" (`archived=true`) e o link "Ver", que abre os MRs do repositório com "Todos".
 - O "Sincronizar agora" continua global (as duas fontes) e, depois de um sync, recarrega também `sources`, `repositories`, `merge-requests` e `commits`.
 - Em telas estreitas, a barra lateral vira uma faixa de ícones no topo.
+- **Tarefa em modal (ML-03, decisão do Carlos):** a tarefa abre só em modal (`<dialog>`), sem tela cheia, na URL `/clickup/tarefas/:id`. Os links passam `location.state` com `background` (a location da lista) e `depth`; a lista de origem continua atrás com os filtros dela, e o acesso direto ou o F5 mostram Tarefas atrás. Fechar (X, Esc, backdrop) ou o Voltar do navegador voltam à lista e devolvem o foco ao link. A preferência `taskOpenMode` (`modal`, o padrão, ou `drawer`) fica em `frontend/src/lib/preferences.ts`, sem tela de configuração até a Fase 2.
 
 ### GitLab (gitlab.com ou self-hosted)
 
@@ -528,7 +529,7 @@ Decisões do Carlos (2026-10-15). A plataforma passa a reunir várias ferramenta
   | Dado | Endpoint | Notas |
   |---|---|---|
   | Escopo do token | `GET /personal_access_tokens/self` | Traz `scopes`, `active`, `revoked` e `expires_at` |
-  | Projetos de um grupo | `GET /groups/:id/projects?include_subgroups=true&with_shared=false` | **Decisões do Carlos (2026-10-15):** sem filtro de arquivados, porque os arquivados vêm com `archived=true` em vez de sumir e virar `deleted_at`; e `with_shared=false`, porque os projetos compartilhados de outros grupos só entram por `GITLAB_PROJECT_IDS`. Objeto completo, com mais de 100 campos: o mapper guarda só `id`, `name`, `path_with_namespace`, `web_url`, `default_branch` (nulo em repositório vazio), `archived` e `last_activity_at` |
+  | Projetos de um grupo | `GET /groups/:id/projects?include_subgroups=true&with_shared=false` | **Decisões do Carlos (2026-10-15):** sem filtro de arquivados, porque os arquivados vêm com `archived=true` em vez de sumir e virar `deleted_at`; e `with_shared=false`, porque os projetos compartilhados de outros grupos só entram por `GITLAB_PROJECT_IDS`. Objeto completo, com mais de 100 campos: o mapper guarda só `id`, `name`, `path_with_namespace`, `web_url`, `default_branch` (nulo em repositório vazio), `archived`, `last_activity_at` e `avatar_url` |
   | Projeto avulso | `GET /projects/:id` | Para `GITLAB_PROJECT_IDS` |
   | Merge requests | `GET /projects/:id/merge_requests?state=all&scope=all&updated_after=...` | O `updated_after` filtra de fato. `author`, `assignees` e `reviewers` trazem `id` e `username`, **sem e-mail** (só `public_email`, muitas vezes vazio) |
   | Commits | `GET /projects/:id/repository/commits?all=true&since=...` | **Decisão do Carlos (2026-10-15): todos os branches (`all=true`)**, para mostrar também o trabalho ainda não mesclado. No projeto testado, 44 commits contra 36 só do branch padrão, com o mesmo custo. Um commit visto em vários branches vem uma vez por sha. Traz `author_name` e `author_email` |
@@ -552,7 +553,7 @@ Decisões do Carlos (2026-10-15). A plataforma passa a reunir várias ferramenta
   - `RepositorySnapshot` (repositórios e um `ListingReport` sempre `full`) e `BatchListing[T]` (lotes num `async for` de uma vez só, com o `report` lido no fim, como no `TaskListing`);
   - `create_code_connector(settings)` em `factory.py`, que levanta `ConnectorConfigError` se `gitlab_enabled` for falso. O `create_connector` do ClickUp não mudou.
   - Com `since`/`updated_since` nulo, a listagem é `full` e completa e pode autorizar exclusões naquele repositório; com data, é incremental e nunca autoriza. Erros por recurso (403/404, 5xx persistente, paginação que não termina) vão para `report.errors`; só `ConnectorAuthError` (401) e `ConnectorConfigError` saem como exceção. Falha de TLS não tem retry.
-  - O `raw` guarda só os campos usados: 7 no projeto, 16 no MR (`author`, `assignees` e `reviewers` só com `id`, `username` e `public_email`) e 8 no commit.
+  - O `raw` guarda só os campos usados: 8 no projeto, 16 no MR (`author`, `assignees` e `reviewers` só com `id`, `username` e `public_email`) e 8 no commit.
   - `backend/scripts/gitlab_amostra_canonica.py` mostra os dados no formato canônico, sem token nem e-mails.
 
 ### Banco (migration `0003`)
@@ -644,7 +645,8 @@ Spike ML-01 (2026-10-15, `backend/scripts/gitlab_spike.py --tags-avatar`, gitlab
 
 Decisões do Carlos (2026-10-15):
 - **Ícones baixados no sync.** O worker baixa a imagem com o token do bot e grava os bytes no banco; a API serve do banco, sem chamar o GitLab.
-  - O conector só baixa URLs no **mesmo host** de `GITLAB_URL` (o token nunca vai para outro host), aceita só `image/png`, `image/jpeg`, `image/gif`, `image/webp`, `image/bmp`, `image/x-icon` e `image/vnd.microsoft.icon` (SVG fica de fora) e até 512 KB. Fora disso, o ícone é ignorado com `warning`.
+  - **Download (ML-05):** o GET direto no `avatar_url` (`/uploads/...`) dá 401 mesmo com o token, então o conector baixa por `GET /projects/:id/avatar`, que responde `application/octet-stream`; o tipo gravado vem da assinatura dos bytes. O `avatar_url` só é aceito no mesmo esquema, host e porta de `GITLAB_URL`, sem credenciais, e nada é pedido fora disso; redirects não são seguidos.
+  - O conector aceita só `image/png`, `image/jpeg`, `image/gif`, `image/webp`, `image/bmp`, `image/x-icon` e `image/vnd.microsoft.icon` (SVG fica de fora) e até 512 KB. Fora disso, o ícone é ignorado com `warning`.
   - O sync só baixa de novo quando o `avatar_url` muda; com `avatar_url` nulo, apaga o ícone guardado. Uma falha ao baixar não deixa o run `partial`: conta em `stats.gitlab.avatar_errors` e o repositório fica sem ícone.
   - Banco: `repositories.avatar_url` (texto, nulo) e a tabela `repository_avatars` (`repository_id` PK e FK com `ON DELETE CASCADE`, `source_url`, `content_type`, `data` bytea, `fetched_at`).
   - API: o item de `GET /repositories` ganha `avatar_updated_at` (o `fetched_at`, ou `null` sem ícone; o `avatar_url` do GitLab não sai). `GET /repositories/{id}/avatar` devolve os bytes com o `content_type` guardado, `X-Content-Type-Options: nosniff` e `Cache-Control: private, max-age=86400`, ou 404. O front usa `/api/v1/repositories/{id}/avatar?v=<avatar_updated_at>` e, sem ícone ou se a imagem falhar, mostra um quadrado com a inicial.
