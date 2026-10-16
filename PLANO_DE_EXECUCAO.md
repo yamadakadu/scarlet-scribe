@@ -268,4 +268,4 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 | ML-05 | integrado | Branch `conector/avatar-tags` (5318383), integrada em 8587a18. Aprovada pelo Revisor sem bloqueios. Sugestões pendentes: sinônimos de tipo de imagem, parâmetros sem uso em `_get` e a chave de identificação por listagem |
 | ML-06 | pendente | |
 | ML-07 | integrado | Branch `portal/avatar-tags` (3855d90, 1dca762). Aprovada pelo Revisor sem bloqueios; aplicadas a allowlist de tipos e o CSP na rota do ícone |
-| ML-08 | em andamento | Branch `vitrine/avatar-tags` |
+| ML-08 | integrado | Branch `vitrine/avatar-tags` (ecda4b8, 721dc09, 7f7c503), conferida pelo Maestro no diff. Ícones e tags aparecem só depois da ML-06 |
