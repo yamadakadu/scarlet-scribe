@@ -16,11 +16,11 @@ export const router = createBrowserRouter([
     path: '/',
     element: <Layout />,
     children: [
-      { index: true, element: <Navigate to={clickupPaths.tasks} replace /> },
+      { index: true, element: <Navigate to={clickupPaths.projects} replace /> },
       {
         path: CLICKUP.basePath.slice(1),
         children: [
-          { index: true, element: <Navigate to={clickupPaths.tasks} replace /> },
+          { index: true, element: <Navigate to={clickupPaths.projects} replace /> },
           { path: CLICKUP_ROUTES.tasks, element: <TasksPage /> },
           { path: `${CLICKUP_ROUTES.tasks}/:id`, element: <TaskDetailPage /> },
           { path: CLICKUP_ROUTES.archived, element: <TasksPage archived /> },
@@ -31,7 +31,7 @@ export const router = createBrowserRouter([
       {
         path: GITLAB.basePath.slice(1),
         children: [
-          { index: true, element: <Navigate to={gitlabPaths.mergeRequests} replace /> },
+          { index: true, element: <Navigate to={gitlabPaths.repositories} replace /> },
           { path: GITLAB_ROUTES.mergeRequests, element: <MergeRequestsPage /> },
           { path: GITLAB_ROUTES.commits, element: <CommitsPage /> },
           { path: GITLAB_ROUTES.repositories, element: <RepositoriesPage /> },

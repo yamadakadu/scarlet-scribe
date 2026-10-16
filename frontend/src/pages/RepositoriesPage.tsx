@@ -1,6 +1,8 @@
 import { Link } from 'react-router'
 import { useRepositories } from '../api/queries.ts'
 import { gitlabPaths } from '../apps.ts'
+import { ChevronRightIcon } from '../assets/icons/UiIcons.tsx'
+import { ExternalLink } from '../components/ExternalLink.tsx'
 import { Pager } from '../components/Pager.tsx'
 import { formatDateTime } from '../lib/dates.ts'
 import { useUrlFilters } from '../lib/params.ts'
@@ -32,9 +34,6 @@ export function RepositoriesPage() {
       {repos.isPending && <p className="placeholder">Carregando…</p>}
       {repos.data && (
         <>
-          <p className="count" aria-live="polite">
-            {total} {total === 1 ? 'repositório' : 'repositórios'}
-          </p>
           {repos.data.items.length === 0 ? (
             <p className="placeholder">Nenhum repositório encontrado.</p>
           ) : (
@@ -53,9 +52,7 @@ export function RepositoriesPage() {
                     <tr key={r.id}>
                       <td>
                         {r.web_url ? (
-                          <a href={r.web_url} target="_blank" rel="noopener noreferrer">
-                            {r.path_with_namespace}
-                          </a>
+                          <ExternalLink href={r.web_url}>{r.path_with_namespace}</ExternalLink>
                         ) : (
                           r.path_with_namespace
                         )}
@@ -64,7 +61,10 @@ export function RepositoriesPage() {
                       <td>{r.default_branch ? <code>{r.default_branch}</code> : '—'}</td>
                       <td>{formatDateTime(r.last_activity_at)}</td>
                       <td>
-                        <Link to={gitlabPaths.mergeRequestsOfRepository(r.id)}>Ver</Link>
+                        <Link className="go-link" to={gitlabPaths.mergeRequestsOfRepository(r.id)}>
+                          Ver
+                          <ChevronRightIcon />
+                        </Link>
                       </td>
                     </tr>
                   ))}
