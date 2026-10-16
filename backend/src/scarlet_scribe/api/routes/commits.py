@@ -4,13 +4,14 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import aggregate_order_by
 from sqlalchemy.orm import contains_eager, defer
 
 from scarlet_scribe.api.deps import PaginationDep, SessionDep
 from scarlet_scribe.api.queries import like_pattern, paginate
 from scarlet_scribe.api.schemas import CommitOut, CommitPage, RepositoryRef, UtcDatetime, UtcDatetimeEnd
-from scarlet_scribe.db.models import CommitRow, RepositoryRow
+from scarlet_scribe.db.models import CommitRow, RepositoryRow, RepositoryTagRow
 
 router = APIRouter(tags=["commits"])
 
@@ -39,8 +40,17 @@ async def list_commits(
     ] = None,
 ) -> CommitPage:
     """Filtros de data sobre `authored_at`; mais recentes primeiro, sem data no fim."""
+    tags = (
+        select(func.array_agg(aggregate_order_by(RepositoryTagRow.name, RepositoryTagRow.name)))
+        .where(
+            RepositoryTagRow.repository_id == CommitRow.repository_id,
+            RepositoryTagRow.commit_sha == CommitRow.sha,
+            RepositoryTagRow.deleted_at.is_(None),
+        )
+        .scalar_subquery()
+    )
     stmt = (
-        select(CommitRow)
+        select(CommitRow, tags.label("tags"))
         .join(CommitRow.repository)
         .where(CommitRow.deleted_at.is_(None), RepositoryRow.deleted_at.is_(None))
     )
@@ -63,6 +73,7 @@ async def list_commits(
                 RepositoryRow.id, RepositoryRow.name, RepositoryRow.path_with_namespace
             ),
         ],
+        entities=False,
     )
     items = [
         CommitOut(
@@ -75,7 +86,8 @@ async def list_commits(
             committed_at=r.committed_at,
             web_url=r.web_url,
             repository=RepositoryRef.model_validate(r.repository),
+            tags=tag_names or [],
         )
-        for r in rows
+        for r, tag_names in rows
     ]
     return CommitPage(items=items, total=total)

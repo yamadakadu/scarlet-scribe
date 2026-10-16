@@ -48,15 +48,21 @@ async def paginate(
     stmt: Select[Any],
     page: Pagination,
     options: Sequence[Any] = (),
+    *,
+    entities: bool = True,
 ) -> tuple[list[Any], int]:
-    """Executa `stmt` paginado e devolve `(itens, total sem paginação)`."""
+    """Executa `stmt` paginado e devolve `(itens, total sem paginação)`.
+
+    Com `entities=False`, os itens são linhas completas (`Row`), para consultas
+    que somam colunas extras à entidade.
+    """
     total = await session.scalar(
         select(func.count()).select_from(stmt.order_by(None).subquery())
     )
-    rows = await session.scalars(
-        stmt.options(*options).limit(page.limit).offset(page.offset)
-    )
-    return list(rows.all()), total or 0
+    paged = stmt.options(*options).limit(page.limit).offset(page.offset)
+    if entities:
+        return list((await session.scalars(paged)).all()), total or 0
+    return list((await session.execute(paged)).all()), total or 0
 
 
 def container_subtree_ids(container_id: uuid.UUID) -> Select[Any]:
