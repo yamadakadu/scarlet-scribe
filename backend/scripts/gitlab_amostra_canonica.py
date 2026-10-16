@@ -32,9 +32,9 @@ from typing import Any
 import httpx
 
 from scarlet_scribe.config import Settings
-from scarlet_scribe.connectors.base import ConnectorError, ListingReport
+from scarlet_scribe.connectors.base import AvatarUnavailable, ConnectorError, ListingReport
 from scarlet_scribe.connectors.factory import create_code_connector
-from scarlet_scribe.domain.models import Commit, MergeRequest, Repository
+from scarlet_scribe.domain.models import Commit, MergeRequest, Repository, RepositoryTag
 
 
 class _ScriptSettings(Settings):
@@ -97,7 +97,8 @@ def print_report(title: str, report: ListingReport) -> None:
 
 def print_repository(repo: Repository) -> None:
     print(f"    {repo.external_id}  {repo.path_with_namespace}  default_branch={repo.default_branch!r}  "
-          f"archived={repo.archived}  atividade={fmt_dt(repo.last_activity_at)}  raw: {len(repo.raw)} chaves")
+          f"archived={repo.archived}  atividade={fmt_dt(repo.last_activity_at)}  "
+          f"avatar_url={presence(repo.avatar_url)}  raw: {len(repo.raw)} chaves")
 
 
 def print_merge_request(mr: MergeRequest, mask: Masker) -> None:
@@ -141,6 +142,7 @@ async def run(args: argparse.Namespace) -> int:
     repositories: list[Repository] = []
     mrs: list[MergeRequest] = []
     commits: list[Commit] = []
+    tags: list[RepositoryTag] = []
     try:
         async with create_code_connector(settings, transport=transport) as connector:
             print(f"Fonte: {connector.source}")
@@ -153,6 +155,31 @@ async def run(args: argparse.Namespace) -> int:
             for repo in repositories[: args.max_itens]:
                 print_repository(repo)
             print_report("Repositórios", snapshot.report)
+
+            with_avatar = [r for r in repositories if r.avatar_url]
+            print(f"\n[Ícones] {len(with_avatar)} repositório(s) com avatar_url")
+            for repo in with_avatar[: args.max_itens]:
+                try:
+                    avatar = await connector.fetch_avatar(repo)
+                    print(f"    {repo.external_id}: content_type={avatar.content_type}  bytes={len(avatar.data)}")
+                except AvatarUnavailable as exc:
+                    print(f"    {repo.external_id}: indisponível ({exc.reason})")
+
+            print("\n[Tags]")
+            for repo in repositories:
+                if repo.archived or repo.default_branch is None:
+                    continue
+                tag_listing = connector.iter_tags(repo.external_id)
+                repo_tags: list[RepositoryTag] = []
+                async for batch in tag_listing:
+                    repo_tags.extend(batch)
+                if repo_tags or tag_listing.report.errors or tag_listing.report.discarded:
+                    print(f"  repo {repo.external_id}: {len(repo_tags)} tag(s)")
+                    for tag in repo_tags[: args.max_itens]:
+                        print(f"    {tag.external_id}  nome={mask(tag.name)}  sha={tag.commit_sha[:12]}…  "
+                              f"raw: {sorted(tag.raw)}")
+                    print_report("Tags", tag_listing.report)
+                    tags.extend(repo_tags)
 
             for repo in repositories[: args.max_repos]:
                 print(f"\n--- Repositório {repo.external_id} ({repo.path_with_namespace}) ---")
@@ -198,7 +225,7 @@ async def run(args: argparse.Namespace) -> int:
 
     secret = settings.gitlab_api_token.get_secret_value()
     people = [m.author for m in mrs if m.author is not None]
-    leaked = raw_has_secret([*repositories, *mrs, *commits, *people], secret)
+    leaked = raw_has_secret([*repositories, *mrs, *commits, *tags, *people], secret)
     print(f"raw sem o token: {'FALHOU' if leaked else 'ok'}")
     return 1 if leaked else 0
 

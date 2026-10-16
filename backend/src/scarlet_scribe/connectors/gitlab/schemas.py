@@ -46,6 +46,7 @@ class GitLabProject(GitLabModel):
     default_branch: str | None = None  # nulo em repositório vazio
     archived: bool = False
     last_activity_at: str | None = None
+    avatar_url: OptionalText = None  # nulo sem ícone
 
 
 class GitLabMergeRequest(GitLabModel):
@@ -78,3 +79,18 @@ class GitLabCommit(GitLabModel):
     authored_date: str | None = None
     committed_date: str | None = None
     web_url: str | None = None
+
+
+class GitLabTagCommit(GitLabModel):
+    id: str  # sha do commit apontado
+
+
+class GitLabTag(GitLabModel):
+    """Tag. Nas anotadas, `target` é o sha do objeto tag; o commit está em `commit.id`."""
+
+    name: str
+    target: str | None = None
+    message: str | None = None
+    protected: bool | None = None
+    created_at: str | None = None
+    commit: GitLabTagCommit | None = None
