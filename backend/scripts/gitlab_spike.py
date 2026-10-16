@@ -154,7 +154,10 @@ def main() -> int:
     iso = lambda d: d.strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
 
     try:
-        run(sp, s, host, now, iso)
+        if "--tags-avatar" in sys.argv:
+            run_tags_avatar(sp, s, verify)
+        else:
+            run(sp, s, host, now, iso)
     except Budget:
         print(f"\nOrçamento de {MAX_REQUESTS} requisições esgotado.")
     except httpx.HTTPError as exc:
@@ -378,6 +381,76 @@ def run(sp: Spike, s: GitLabSpikeSettings, host: str, now: datetime, iso) -> Non
                 print(f"  email presente em algum membro: {any('email' in m for m in items)}")
         else:
             print(f"  corpo: chaves={sorted(r.json()) if r.headers.get('content-type','').startswith('application/json') and isinstance(r.json(), dict) else '-'}")
+
+
+def run_tags_avatar(sp: Spike, s: GitLabSpikeSettings, verify: str | bool) -> None:
+    """ML-01: tags do repositório e avatar_url (rode com --tags-avatar)."""
+    projects: list[dict] = []
+    for gid in s.gitlab_group_ids:
+        r = sp.get(f"/groups/{gid}/projects", include_subgroups="true", archived="false",
+                   per_page=PAGE_SIZE, page=1)
+        print(f"  GET /groups/{gid}/projects -> {r.status_code}")
+        if r.status_code == 200:
+            projects.extend(r.json())
+    for pid in s.gitlab_project_ids:
+        r = sp.get(f"/projects/{pid}")
+        if r.status_code == 200:
+            projects.append(r.json())
+    projects = projects[:20]
+    print(f"  projetos: {len(projects)}")
+
+    section("9. avatar_url e visibilidade")
+    print(f"  visibility (listagem do grupo): {dict(Counter(p.get('visibility') for p in projects))}")
+    print(f"  avatar_url na listagem: chave presente em {sum('avatar_url' in p for p in projects)}/"
+          f"{len(projects)}; nao-nulos={sum(bool(p.get('avatar_url')) for p in projects)}")
+    shown_fmt = False
+    for p in projects:
+        r = sp.get(f"/projects/{p['id']}")
+        d = r.json() if r.status_code == 200 else {}
+        a = d.get("avatar_url")
+        list_a = p.get("avatar_url")
+        print(f"  projeto {p['id']}: GET /projects/:id -> {r.status_code} visibility={d.get('visibility')} "
+              f"avatar(detalhe)={'null' if a is None else 'preenchido'} "
+              f"avatar(lista)={'null' if list_a is None else 'preenchido'}")
+        if a and not shown_fmt:
+            u = urlparse(a)
+            print(f"  formato: esquema={u.scheme} host={u.hostname} caminho={u.path.rsplit('/', 1)[0]}/<arquivo> "
+                  f"query={'sim' if u.query else 'nao'}; mesma instancia: {u.hostname == urlparse(sp.base).hostname}")
+            shown_fmt = True
+            if sp.count < MAX_REQUESTS:
+                sp.count += 1
+                with httpx.Client(timeout=TIMEOUT, verify=verify, follow_redirects=False) as anon:
+                    ra = anon.get(a)  # GET sem PRIVATE-TOKEN
+                print(f"  GET avatar SEM token -> {ra.status_code} content-type={ra.headers.get('content-type')} "
+                      f"bytes={len(ra.content)} location={'sim' if ra.headers.get('location') else 'nao'}")
+    if not shown_fmt:
+        print("  nenhum projeto tem avatar_url nao nulo (sem ícone).")
+
+    section("10. Tags do repositório")
+    for p in projects:
+        pid = p["id"]
+        r = sp.get(f"/projects/{pid}/repository/tags", per_page=PAGE_SIZE, order_by="updated", sort="desc")
+        print(f"  projeto {pid}: GET .../repository/tags -> {r.status_code}")
+        print(f"    {pag_headers(r)}")
+        print(f"    {link_summary(r)}")
+        if r.status_code != 200:
+            continue
+        tags = r.json()
+        print(f"    tags na pagina 1: {len(tags)}")
+        if not tags:
+            continue
+        t0 = tags[0]
+        print(f"    campos: {sorted(t0)}")
+        print(f"    tipos: { {k: tname(v) for k, v in t0.items() if k != 'commit'} }")
+        c = t0.get("commit") or {}
+        print(f"    commit campos: {sorted(c)}")
+        print(f"    protected: {dict(Counter(t.get('protected') for t in tags))}")
+        print(f"    message nao-nula (anotadas): {sum(bool(t.get('message')) for t in tags)}/{len(tags)}")
+        print(f"    target != commit.id: {sum(t.get('target') != (t.get('commit') or {}).get('id') for t in tags)}/{len(tags)}")
+        print(f"    commit.id tem {len(c.get('id', ''))} chars; short_id tem {len(c.get('short_id', ''))}")
+        for k in ("created_at", "committed_date", "authored_date"):
+            print(f"    commit.{k}: {c.get(k, 'AUSENTE')}; tag.created_at: {t0.get('created_at', 'AUSENTE')}")
+            break
 
 
 if __name__ == "__main__":
