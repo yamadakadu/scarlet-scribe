@@ -266,6 +266,6 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 | ML-03 | integrado | Branch `vitrine/modal-tarefa` (8c1d647, 562acd9), integrada em 54234c0. O Revisor bloqueou uma vez (o foco não voltava ao link ao fechar), e a correção foi aprovada. Sugestões pendentes: ignorar o segundo clique ao fechar e remover sempre o listener do `leave` |
 | ML-04 | integrado | Branch `arquivista/avatar-tags` (d1b3ac0, 231e2a1). Aprovada pelo Revisor sem bloqueios; aplicadas as sugestões (ordem dos imports, sha de 40 ou 64) |
 | ML-05 | integrado | Branch `conector/avatar-tags` (5318383), integrada em 8587a18. Aprovada pelo Revisor sem bloqueios. Sugestões pendentes: sinônimos de tipo de imagem, parâmetros sem uso em `_get` e a chave de identificação por listagem |
-| ML-06 | pendente | |
+| ML-06 | integrado | Branch `sincronista/tags-avatares` (4f5e8e4, f56cea2), integrada em 423a915. Aprovada pelo Revisor sem bloqueios; dois syncs reais `succeeded` (7 tags e 1 ícone; o segundo sem duplicar nem baixar de novo) |
 | ML-07 | integrado | Branch `portal/avatar-tags` (3855d90, 1dca762). Aprovada pelo Revisor sem bloqueios; aplicadas a allowlist de tipos e o CSP na rota do ícone |
 | ML-08 | integrado | Branch `vitrine/avatar-tags` (ecda4b8, 721dc09, 7f7c503), conferida pelo Maestro no diff. Ícones e tags aparecem só depois da ML-06 |
