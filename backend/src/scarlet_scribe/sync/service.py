@@ -1,4 +1,4 @@
-"""`SyncService`: executa um run de sync (passos 1 a 3 do `ARCHITECTURE.md`).
+"""`SyncService`: executa um run de sync (ClickUp, passos 1 a 3; GitLab, G1 a G5).
 
 1. **Estrutura:** workspace, pessoas e containers. Containers que não vieram
    ganham `deleted_at`, só se a listagem da estrutura veio completa.
@@ -21,8 +21,18 @@ G2. **Merge requests, por repositório não arquivado:** reconciliação complet
 G3. **Commits, por repositório não arquivado e não vazio:** desde o watermark
     (máximo de `committed_at`) menos 5 min; na primeira vez, só a janela de
     `INITIAL_COMMITS_WINDOW`. Commits nunca ganham `deleted_at`.
+G4. **Ícones (Melhorias, rodada 1), logo depois de G1, em todos os repositórios
+    que vieram (inclusive arquivados):** com `avatar_url` nulo, apaga o ícone
+    guardado; baixa de novo só quando o `avatar_url` difere do `source_url`
+    guardado (ou não há ícone guardado). Uma falha ao baixar (`AvatarUnavailable`)
+    conta em `avatar_errors`, não deixa o run parcial e apaga o ícone antigo,
+    que não corresponde mais ao `avatar_url` atual; sem ícone guardado, o
+    download é tentado de novo no próximo run.
+G5. **Tags, depois dos commits, por repositório não arquivado e não vazio:**
+    listagem completa a cada run (sem watermark); `deleted_at` nas tags do
+    repositório que não voltaram, só com `report.allows_deletions`.
 
-Um 403/404 na listagem de MRs ou commits de um repositório é "recurso
+Um 403/404 na listagem de MRs, commits ou tags de um repositório é "recurso
 indisponível": não deixa o run parcial e não avança o watermark. O watermark de
 MRs e commits nunca passa do início da listagem (datas no futuro na origem).
 
@@ -60,12 +70,13 @@ from datetime import UTC, datetime, timedelta
 from functools import partial
 from typing import Any
 
-from sqlalchemy import Text, Uuid, bindparam, func, literal_column, select, text, update
+from sqlalchemy import Text, Uuid, bindparam, delete, func, literal_column, select, text, update
 from sqlalchemy.dialects.postgresql import ARRAY, insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from scarlet_scribe.config import Settings
 from scarlet_scribe.connectors.base import (
+    AvatarUnavailable,
     CodeConnector,
     Connector,
     ConnectorAuthError,
@@ -86,7 +97,9 @@ from scarlet_scribe.db.models import (
     ContainerRow,
     MergeRequestRow,
     PersonRow,
+    RepositoryAvatarRow,
     RepositoryRow,
+    RepositoryTagRow,
     SyncRunRow,
     SyncStateRow,
     TaskRow,
@@ -94,7 +107,7 @@ from scarlet_scribe.db.models import (
     task_assignees,
 )
 from scarlet_scribe.db.session import get_sessionmaker
-from scarlet_scribe.domain.models import MergeRequest, Person, Repository, Task
+from scarlet_scribe.domain.models import MergeRequest, Person, Repository, RepositoryTag, Task
 from scarlet_scribe.domain.sync import SyncStatus
 
 logger = logging.getLogger(__name__)
@@ -117,7 +130,7 @@ INTERRUPTED_ERROR = "interrompido"
 # É uma constante de propósito, não uma variável de ambiente.
 INITIAL_COMMITS_WINDOW = timedelta(days=365)
 # 403 (MRs desativados, sem permissão) ou 404 (repositório vazio) na listagem de
-# MRs ou de commits de um repositório: "recurso indisponível", não um erro.
+# MRs, de commits ou de tags de um repositório: "recurso indisponível", não um erro.
 UNAVAILABLE_STATUS_CODES = frozenset({403, 404})
 
 _TEXT_ARRAY = ARRAY(Text)
@@ -153,13 +166,22 @@ class _CodeSourceState:
     source: str
     counters: dict[str, _Counter] = field(
         default_factory=lambda: {
-            name: _Counter() for name in ("repositories", "merge_requests", "commits", "people")
+            name: _Counter()
+            for name in ("repositories", "merge_requests", "commits", "tags", "people")
         }
     )
+    # Ícones: baixados, apagados (`avatar_url` nulo ou download falho depois de
+    # mudar) e sem mudança (mesmo `avatar_url`, nada baixado).
+    avatars: dict[str, int] = field(
+        default_factory=lambda: {"downloaded": 0, "removed": 0, "unchanged": 0}
+    )
+    # Falhas ao obter o ícone: `{repository, reason}`. Não deixam a fonte parcial.
+    avatar_errors: list[dict[str, str]] = field(default_factory=list)
     repository_listing: dict[str, Any] | None = None
     # Um relatório por repositório, pelo `external_id` do repositório.
     merge_request_listings: dict[str, dict[str, Any]] = field(default_factory=dict)
     commit_listings: dict[str, dict[str, Any]] = field(default_factory=dict)
+    tag_listings: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Repositórios sem busca de MRs e commits (arquivados) ou só de commits (vazios).
     skipped: dict[str, int] = field(default_factory=lambda: {"archived": 0, "empty": 0})
     unavailable: list[dict[str, Any]] = field(default_factory=list)
@@ -186,10 +208,15 @@ class _CodeSourceState:
             data["repository_listing"] = self.repository_listing
         data["merge_request_listings"] = dict(self.merge_request_listings)
         data["commit_listings"] = dict(self.commit_listings)
+        data["tag_listings"] = dict(self.tag_listings)
+        data["avatars"] = dict(self.avatars)
+        data["avatar_errors"] = {
+            "count": len(self.avatar_errors), "details": list(self.avatar_errors)
+        }
         data["skipped_repositories"] = dict(self.skipped)
         data["unavailable"] = {
             kind: sum(1 for item in self.unavailable if item["resource"] == kind)
-            for kind in ("merge_requests", "commits")
+            for kind in ("merge_requests", "commits", "tags")
         } | {"details": list(self.unavailable)}
         if self.errors:
             data["errors"] = list(self.errors)
@@ -212,8 +239,9 @@ class _CodeSourceState:
             {"resource": resource, "repository": repository_id, "status_codes": status_codes}
         )
         logger.warning(
-            "%s: %s do repositório %s indisponíveis (HTTP %s); watermark mantido",
+            "%s: %s do repositório %s indisponíveis (HTTP %s); %s",
             self.source, resource, repository_id, "/".join(map(str, status_codes)),
+            "nenhuma exclusão" if resource == "tags" else "watermark mantido",
         )
 
 
@@ -367,15 +395,19 @@ class SyncService:
         )
         if state.code is not None:
             code = state.code
-            repos, mrs, commits = (
-                code.counters[name] for name in ("repositories", "merge_requests", "commits")
+            repos, mrs, commits, tags = (
+                code.counters[name]
+                for name in ("repositories", "merge_requests", "commits", "tags")
             )
             logger.info(
                 "run %s, %s: %s (repositórios: %d vistos, %d removidos; merge requests: %d "
-                "criados, %d atualizados, %d removidos; commits: %d criados, %d atualizados)",
+                "criados, %d atualizados, %d removidos; commits: %d criados, %d atualizados; "
+                "tags: %d criadas, %d atualizadas, %d removidas; ícones: %d baixados, "
+                "%d apagados, %d com falha)",
                 run_id, code.source, code.status().value, repos.created + repos.updated,
                 repos.deleted, mrs.created, mrs.updated, mrs.deleted, commits.created,
-                commits.updated,
+                commits.updated, tags.created, tags.updated, tags.deleted,
+                code.avatars["downloaded"], code.avatars["removed"], len(code.avatar_errors),
             )
         return status
 
@@ -607,7 +639,7 @@ class SyncService:
     # --- Fase M: fonte de código (GitLab) ---------------------------------------
 
     async def _run_code_source(self, run_id: uuid.UUID, state: _RunState) -> None:
-        """Passos G1 a G3, só com `settings.gitlab_enabled`. Nenhum erro sai daqui
+        """Passos G1 a G5, só com `settings.gitlab_enabled`. Nenhum erro sai daqui
         (exceto o cancelamento): eles ficam no desfecho da fonte, em `state.code`."""
         if not self._settings.gitlab_enabled:
             state.code_skipped = "não configurado"
@@ -646,11 +678,21 @@ class SyncService:
             code.fail("repositórios", exc)
             return
         code.wrote = True
+        repositories = _dedupe(snapshot.repositories)
+
+        # G4: ícones de todos os repositórios que vieram (inclusive arquivados).
+        try:
+            await self._step_avatars(run_id, connector, repositories, repository_ids, code, state)
+        except (ConnectorAuthError, ConnectorConfigError) as exc:
+            code.fail("ícones", exc)
+            return
+        except Exception as exc:  # por exemplo, na consulta dos ícones guardados
+            code.step_error("ícones", exc)
 
         sync_states = await self._load_code_states(source)
         # Autores já gravados (com commit) neste run: external_id → people.id.
         person_ids: dict[str, uuid.UUID] = {}
-        for repo in _dedupe(snapshot.repositories):
+        for repo in repositories:
             if repo.archived:
                 code.skipped["archived"] += 1
                 continue
@@ -683,6 +725,15 @@ class SyncService:
                 return
             except Exception as exc:
                 code.step_error(f"commits do repositório {repo.external_id}", exc)
+
+            # G5: tags do repositório (listagem completa a cada run).
+            try:
+                await self._step_tags(run_id, connector, source, repo, repository_ids, code, state)
+            except (ConnectorAuthError, ConnectorConfigError) as exc:
+                code.fail("tags", exc)
+                return
+            except Exception as exc:
+                code.step_error(f"tags do repositório {repo.external_id}", exc)
 
     async def _step_repositories(
         self,
@@ -936,6 +987,145 @@ class SyncService:
             source, repo.external_id, since.isoformat(), received,
         )
 
+    async def _step_avatars(
+        self,
+        run_id: uuid.UUID,
+        connector: CodeConnector,
+        repositories: Sequence[Repository],
+        repository_ids: dict[str, uuid.UUID],
+        code: _CodeSourceState,
+        state: _RunState,
+    ) -> None:
+        """Ícones dos repositórios que vieram na listagem (inclusive arquivados).
+
+        - `avatar_url` nulo: apaga o ícone guardado (um DELETE só).
+        - `avatar_url` igual ao `source_url` guardado: nada a fazer.
+        - Senão: baixa (fora de transação) e grava numa transação curta, com
+          `fetched_at = now()`. `AvatarUnavailable` conta em `avatar_errors`
+          (`warning`, sem a fonte ficar parcial) e apaga o ícone antigo, que não
+          corresponde mais ao `avatar_url`; sem ícone guardado, o próximo run tenta
+          de novo. 401 e erro de configuração propagam (o chamador falha a fonte).
+        """
+        targets = [repo for repo in repositories if repo.external_id in repository_ids]
+        async with self._sessionmaker() as session:
+            stored = await _stored_avatar_urls(
+                session, [repository_ids[repo.external_id] for repo in targets]
+            )
+
+        without_url = [
+            repository_ids[repo.external_id]
+            for repo in targets
+            if not repo.avatar_url and repository_ids[repo.external_id] in stored
+        ]
+        if without_url:
+            async with self._sessionmaker() as session, session.begin():
+                code.avatars["removed"] += await _delete_avatars(session, without_url)
+                await _save_progress(session, run_id, state)
+
+        for repo in targets:
+            if not repo.avatar_url:
+                continue
+            repository_id = repository_ids[repo.external_id]
+            previous = stored.get(repository_id)
+            if previous == repo.avatar_url:
+                code.avatars["unchanged"] += 1
+                continue
+            try:
+                avatar = await connector.fetch_avatar(repo)
+            except AvatarUnavailable as exc:  # antes de ConnectorError (é subclasse)
+                reason = _short(exc.reason or type(exc).__name__)
+                code.avatar_errors.append({"repository": repo.external_id, "reason": reason})
+                logger.warning(
+                    "%s: ícone do repositório %s indisponível: %s",
+                    code.source, repo.external_id, reason,
+                )
+                if previous is not None:
+                    try:
+                        async with self._sessionmaker() as session, session.begin():
+                            code.avatars["removed"] += await _delete_avatars(session, [repository_id])
+                            await _save_progress(session, run_id, state)
+                    except Exception as db_exc:
+                        code.step_error(f"ícone do repositório {repo.external_id}", db_exc)
+                continue
+            try:
+                async with self._sessionmaker() as session, session.begin():
+                    await _upsert_avatar(session, repository_id, avatar.source_url,
+                                         avatar.content_type, avatar.data)
+                    code.avatars["downloaded"] += 1
+                    await _save_progress(session, run_id, state)
+            except Exception as exc:
+                code.step_error(f"ícone do repositório {repo.external_id}", exc)
+
+        logger.info(
+            "%s: ícones: %d baixado(s), %d apagado(s), %d sem mudança, %d com falha",
+            code.source, code.avatars["downloaded"], code.avatars["removed"],
+            code.avatars["unchanged"], len(code.avatar_errors),
+        )
+
+    async def _step_tags(
+        self,
+        run_id: uuid.UUID,
+        connector: CodeConnector,
+        source: str,
+        repo: Repository,
+        repository_ids: dict[str, uuid.UUID],
+        code: _CodeSourceState,
+        state: _RunState,
+    ) -> None:
+        """Tags de um repositório: listagem completa a cada run (sem watermark);
+        `deleted_at` nas que não voltaram, só com `report.allows_deletions`. Uma
+        tag que volta perde o `deleted_at` (no upsert)."""
+        repository_id = repository_ids[repo.external_id]
+        listing = connector.iter_tags(repo.external_id)
+        counter = code.counters["tags"]
+        seen: set[str] = set()
+
+        async with self._sessionmaker() as session, session.begin():
+            async for batch in listing:
+                tags = _dedupe(batch)
+                if not tags:
+                    continue
+                seen.update(tag.external_id for tag in tags)
+                rows = await _upsert(
+                    session,
+                    RepositoryTagRow,
+                    [_tag_values(tag, repository_ids) for tag in tags],
+                    update_columns=("repository_id", "name", "commit_sha", "raw"),
+                )
+                counter.add_upserted(rows)
+
+            report = listing.report
+            listing_stats: dict[str, Any] = report.to_stats()
+            unavailable = _resource_unavailable(report)
+            reconciled = False
+            if unavailable:
+                code.note_unavailable("tags", repo.external_id, report)
+                listing_stats["unavailable"] = True
+            else:
+                skip_reason = _code_deletions_blocker(report, requested_full=True, what="tags")
+                if skip_reason is None:
+                    counter.deleted += await _mark_deleted_tags(
+                        session, source, repository_id, seen | report.discarded_ids
+                    )
+                    reconciled = True
+                else:
+                    listing_stats["deletions_skipped"] = True
+                    listing_stats["deletions_skipped_reason"] = skip_reason
+            listing_stats["reconciled"] = reconciled
+            code.tag_listings[repo.external_id] = listing_stats
+            await _save_progress(session, run_id, state)
+
+        if not unavailable and not report.complete:
+            code.partial = True
+            logger.warning(
+                "%s: tags do repositório %s parciais (%d erro(s)); nenhuma exclusão",
+                source, repo.external_id, len(report.errors),
+            )
+        logger.info(
+            "%s: repositório %s, tags: %d recebida(s)%s",
+            source, repo.external_id, len(seen), " (reconciliado)" if reconciled else "",
+        )
+
     def _code_reconcile_due(self, sync_state: SyncStateRow | None) -> bool:
         """Reconciliação completa dos MRs de um repositório: na primeira vez e a
         cada `SYNC_FULL_RECONCILE_HOURS`. Diferente das tarefas, não exige
@@ -1056,6 +1246,7 @@ _REPOSITORY_COLUMNS = (
     "default_branch",
     "archived",
     "last_activity_at",
+    "avatar_url",
 )
 _MERGE_REQUEST_COLUMNS = (
     "iid",
@@ -1085,6 +1276,15 @@ _COMMIT_COLUMNS = (
 
 def _repository_values(repo: Repository) -> dict[str, Any]:
     return _record(repo, **{column: getattr(repo, column) for column in _REPOSITORY_COLUMNS})
+
+
+def _tag_values(tag: RepositoryTag, repository_ids: dict[str, uuid.UUID]) -> dict[str, Any]:
+    return _record(
+        tag,
+        repository_id=repository_ids[tag.external_repository_id],
+        name=tag.name,
+        commit_sha=tag.commit_sha,
+    )
 
 
 def _dedupe[R](records: Iterable[R]) -> list[R]:
@@ -1290,6 +1490,16 @@ _MARK_DELETED_MERGE_REQUESTS = text(
 ).bindparams(bindparam("seen", type_=_TEXT_ARRAY), bindparam("repository_id", type_=Uuid()))
 
 
+# As tags são reconciliadas por repositório, como os MRs.
+_MARK_DELETED_TAGS = text(
+    """
+    UPDATE repository_tags SET deleted_at = now()
+    WHERE source = :source AND repository_id = :repository_id AND deleted_at IS NULL
+      AND NOT (external_id = ANY(:seen))
+    """
+).bindparams(bindparam("seen", type_=_TEXT_ARRAY), bindparam("repository_id", type_=Uuid()))
+
+
 async def _mark_deleted(session: AsyncSession, table: str, source: str, seen: set[str]) -> int:
     """Soft delete dos registros da fonte que não estão em `seen`. Devolve quantos."""
     result = await session.execute(_MARK_DELETED[table], {"source": source, "seen": sorted(seen)})
@@ -1305,6 +1515,64 @@ async def _mark_deleted_merge_requests(
         {"source": source, "repository_id": repository_id, "seen": sorted(seen)},
     )
     return result.rowcount or 0
+
+
+async def _mark_deleted_tags(
+    session: AsyncSession, source: str, repository_id: uuid.UUID, seen: set[str]
+) -> int:
+    """Soft delete das tags do repositório que não estão em `seen`. Devolve quantas."""
+    result = await session.execute(
+        _MARK_DELETED_TAGS,
+        {"source": source, "repository_id": repository_id, "seen": sorted(seen)},
+    )
+    return result.rowcount or 0
+
+
+async def _stored_avatar_urls(
+    session: AsyncSession, repository_ids: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, str]:
+    """`repository_id → source_url` dos ícones guardados (sem ler os bytes)."""
+    if not repository_ids:
+        return {}
+    stmt = select(RepositoryAvatarRow.repository_id, RepositoryAvatarRow.source_url).where(
+        RepositoryAvatarRow.repository_id
+        == func.any(bindparam("ids", list(repository_ids), type_=_UUID_ARRAY))
+    )
+    return {row.repository_id: row.source_url for row in (await session.execute(stmt)).all()}
+
+
+async def _delete_avatars(session: AsyncSession, repository_ids: Sequence[uuid.UUID]) -> int:
+    """Apaga os ícones guardados desses repositórios. Devolve quantos."""
+    result = await session.execute(
+        delete(RepositoryAvatarRow).where(
+            RepositoryAvatarRow.repository_id
+            == func.any(bindparam("ids", list(repository_ids), type_=_UUID_ARRAY))
+        )
+    )
+    return result.rowcount or 0
+
+
+async def _upsert_avatar(
+    session: AsyncSession, repository_id: uuid.UUID, source_url: str, content_type: str, data: bytes
+) -> None:
+    """Grava (ou substitui) o ícone do repositório, com `fetched_at = now()`."""
+    stmt = insert(RepositoryAvatarRow).values(
+        repository_id=repository_id,
+        source_url=source_url,
+        content_type=content_type,
+        data=data,
+        fetched_at=func.now(),
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["repository_id"],
+        set_={
+            "source_url": stmt.excluded.source_url,
+            "content_type": stmt.excluded.content_type,
+            "data": stmt.excluded.data,
+            "fetched_at": func.now(),
+        },
+    )
+    await session.execute(stmt)
 
 
 async def _save_state(
