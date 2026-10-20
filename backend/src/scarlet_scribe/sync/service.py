@@ -1,4 +1,4 @@
-"""`SyncService`: executa um run de sync (passos 1 a 3 do `ARCHITECTURE.md`).
+"""`SyncService`: executa um run de sync (ClickUp, passos 1 a 3; GitLab, G1 a G5).
 
 1. **Estrutura:** workspace, pessoas e containers. Containers que não vieram
    ganham `deleted_at`, só se a listagem da estrutura veio completa.
