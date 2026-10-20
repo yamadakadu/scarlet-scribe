@@ -19,7 +19,7 @@ Este plano diz o que será executado, por quem e em que ordem, para que o orques
 | **Revisor** | Revisa cada entrega antes da integração. Só lê, não altera código | — |
 | **Carlos** (humano) | Fornece credenciais, toma as decisões de produto e aprova as fases | — |
 
-Fase 2: **Guardião** (login LDAP e sessões) e **Ponte** (OAuth e conexão com o ClickUp).
+Fase 2: **Guardião** (login LDAP e sessões) e **Ponte** (OAuth e conexão com o ClickUp e o GitLab). Fase I: **Mensageiro** (os escritores `connectors/*/writer.py` e o serviço da fila de escritas em `actions/`).
 
 ## Regras de operação
 
@@ -59,6 +59,7 @@ Decisão do Carlos (2026-10-14), para reduzir o consumo de tokens. O padrão de 
 | Vitrine | `claude-sonnet-5-5` | `medium` | — |
 | Batedor | `claude-sonnet-5-5` | `medium` | — |
 | Alicerce | `claude-sonnet-5-5` | `medium` | `low` para ajuste de uma ou duas linhas |
+| Mensageiro (Fase I) | `claude-opus-5-5` | `high` | — (escrita nas ferramentas: sem variação para baixo) |
 | Qualquer agente, tarefa mecânica (1 a 2 linhas, sem lógica nova) | `claude-haiku-5-5` no disparo | `low` | — |
 
 Regras:
@@ -216,21 +217,77 @@ Ajustes pedidos pelo Carlos (2026-10-15), lidos pelo Maestro numa lista própria
 | ML-07 | `avatar_updated_at` em `GET /repositories`, `GET /repositories/{id}/avatar` (do banco) e `tags: string[]` em `GET /commits` | Portal | ML-04 | C | `curl` nas duas rotas; OpenAPI gerado; Revisor |
 | ML-08 | Ícone (de `/repositories/{id}/avatar`, ou a inicial) nos repositórios e tags como badges nos commits; cliente TS regenerado | Vitrine | ML-07 | D | typecheck, lint e build; conferido pelo Maestro no diff |
 
+## Issues do GitLab (extensão da Fase M, somente leitura)
+
+Pré-requisito da Fase I. Não muda nenhuma regra: tudo continua só GET com o token `read_api` do bot.
+
+| ID | Tarefa | Agente | Depende de | Entregável e critério de pronto |
+|---|---|---|---|---|
+| FM-12 | Spike: `GET /projects/:id/issues?scope=all&state=all&updated_after=...` (campos, filtro incremental, confidenciais) e `GET /projects/:id/issues/:iid/closed_by` (MRs que fecharam a issue) | Batedor | — | Relatório com a evidência; o Maestro atualiza o `ARCHITECTURE.md` |
+| FM-13 | Modelo canônico `Issue` e migration com a tabela `issues` (labels e assignees no `raw`, salvo decisão contrária) | Arquivista | FM-12 | `alembic upgrade head` e `downgrade -1` limpos; Revisor |
+| FM-14 | `iter_issues(repository_id, *, updated_since=None)` e a consulta dos MRs que fecharam uma issue | Conector | FM-13 | Script com issues canônicas; só GET; Revisor |
+| FM-15 | Passo de issues no sync, incremental com watermark, como os MRs; 403/404 é "recurso indisponível" | Sincronista | FM-14 | Sync `succeeded` com issues; o segundo não duplica; Revisor |
+| FM-16 | `GET /issues` (filtros de repositório, estado e busca) | Portal | FM-13 | `curl` com o formato documentado; Revisor |
+| FM-17 | Aba "Issues" no GitLab | Vitrine | FM-16 | typecheck, lint e build |
+
 ## Fase 2: autenticação e horas (à parte)
+
+**Decisão do Carlos (2026-10-20):** F2-01 a F2-04 (login e conexões das contas ClickUp e GitLab) vêm antes da Fase I. F2-05 a F2-07 (horas) ficam para depois dela.
 
 Só começa depois da F1-11. Esta tabela é uma visão prévia e será detalhada quando a Fase 2 for liberada.
 
 | ID | Tarefa | Agente | Depende de |
 |---|---|---|---|
-| F2-01 | Passar os dados do LDAP (tipo de servidor, filtro, TLS, conta de serviço, grupo), conseguir que um Owner ou Admin cadastre o app OAuth no ClickUp e decidir a visibilidade das horas | Carlos | F1-11 |
-| F2-02 | Tabelas `app_users`, `sessions`, `clickup_connections` e `time_entries`, numa migration própria | Arquivista | F1-11 |
+| F2-01 | Passar os dados do LDAP (tipo de servidor, filtro, TLS, conta de serviço, grupo), conseguir que um Owner ou Admin cadastre o app OAuth no ClickUp, criar o app OAuth no GitLab (FI-01) e decidir a visibilidade das horas | Carlos | F1-11 |
+| F2-02 | Tabelas `app_users`, `sessions`, `clickup_connections`, `gitlab_connections` e `time_entries`, numa migration própria | Arquivista | F1-11 |
 | F2-03 | Login LDAP, sessões, a dependência `current_user` e a proteção de todas as rotas | Guardião | F2-01, F2-02 |
-| F2-04 | Fluxo OAuth (connect, callback e desconectar), criptografia dos tokens e as rotas `/integrations/clickup/*` | Ponte | F2-01, F2-02, F2-03 |
+| F2-04 | Fluxo OAuth (connect, callback e desconectar), criptografia dos tokens e as rotas `/integrations/clickup/*`; o mesmo para o GitLab (`/integrations/gitlab/*`, escopo `api`) | Ponte | F2-01, F2-02, F2-03 |
 | F2-05 | Passo 4 do sync: horas por pessoa conectada | Sincronista | F2-04 |
 | F2-06 | Rotas `/time-entries` e `/time-entries/summary`, e o total de horas com cobertura em `/tasks/{id}` | Portal | F2-02, F2-03 |
 | F2-07 | Telas de login, "Conectar ClickUp", "Minhas horas" e o indicador de cobertura | Vitrine | F2-03, F2-04, F2-06 |
 | F2-08 | Revisão de cada entrega | Revisor | cada entrega |
 | F2-09 | Verificação ponta a ponta da Fase 2 | Maestro + Carlos | todas |
+
+## Fase I: integração ClickUp ↔ GitLab com escrita
+
+Decisões do Carlos (2026-10-20). É o primeiro ponto de escrita nas ferramentas e só começa depois da FI-02, que muda as regras e os hooks.
+- **Ordem:** issues somente leitura (FM-12 a FM-17), depois a Fase 2 só com login e conexões (F2-01 a F2-04), e então esta fase. As horas da Fase 2 (F2-05 a F2-07) ficam para depois.
+- **Criar a issue:**
+  - um botão no modal da tarefa da nossa web app, só para quem está logado e com as contas ClickUp e GitLab conectadas;
+  - a escrita usa o **token da própria pessoa** (OAuth do ClickUp e do GitLab), nunca um bot;
+  - a issue leva o link da task, e a task ganha um comentário com o link da issue;
+  - a associação fica em `task_issue_links`.
+- **Fechamento:** quando o sync das issues vê a issue fechada por um MR, o worker **só comenta** na task do ClickUp, com o MR, o autor e o aviso de que é automático e precisa de verificação. A task **nunca** muda de status nem é fechada pelo sistema. O comentário usa o token de quem criou a associação; um 401 marca a conexão `revoked` e a ação fica com falha visível na tarefa.
+- **Endpoints de escrita permitidos** (lista fechada):
+  - `POST /projects/:id/issues` (GitLab);
+  - `POST /v2/task/{id}/comment` (ClickUp).
+  - Nenhum outro, e nunca DELETE.
+- **Travas em tempo de execução:**
+  - toda escrita passa antes pela fila auditada `write_actions` (alvo, payload resumido sem tokens, autor, status e chave de idempotência);
+  - a chave geral `WRITES_ENABLED` vem desligada por padrão e, desligada, só simula;
+  - as listas de permitidos `GITLAB_WRITE_PROJECT_IDS` e `CLICKUP_WRITE_LIST_IDS` limitam onde se escreve;
+  - só os escritores isolados (`connectors/gitlab/writer.py` e `connectors/clickup/writer.py`) fazem chamadas de escrita, e só o serviço da fila (`actions/`) os importa.
+- **Exceção nova à regra "a API só lê do banco":** a rota que cria a issue chama as ferramentas, pela fila.
+- **Testes (exceção aprovada à regra "sem testes até o MVP"):** só para os escritores, a fila e as travas. Como os testes são feitos, para não haver falso positivo:
+  - cada teste confere a requisição exata capturada (`httpx.MockTransport`): método, caminho, corpo e headers, além de checar que o token não aparece em logs nem na fila;
+  - testes negativos obrigatórios: endpoint fora da lista, DELETE, `WRITES_ENABLED` desligado (nenhuma requisição sai), projeto ou list fora da lista de permitidos, e chave de idempotência repetida (uma requisição só);
+  - **prova de que o teste pega o erro:** o Revisor roda a suíte contra uma versão quebrada de propósito do escritor (por exemplo, um caminho trocado ou a trava ignorada), e ela tem que falhar. Uma suíte que passa com o código quebrado é bloqueio;
+  - o Maestro mostra ao Carlos, antes de integrar, a lista de casos e a saída do pytest (os aprovados e a rodada com o código quebrado).
+- **Verificações novas no fluxo:**
+  - toda entrega com escrita passa pelo Revisor completo (Opus, `high`), nunca só pelo diff do Maestro;
+  - o teste real só na sandbox (um projeto GitLab e uma list ClickUp dedicados, nas listas de permitidos), com o Carlos avisado antes de ligar o `WRITES_ENABLED`;
+  - os agentes nunca escrevem nas ferramentas na mão (`curl` de escrita continua bloqueado).
+
+| ID | Tarefa | Agente | Depende de | Entregável e critério de pronto |
+|---|---|---|---|---|
+| FI-01 | Criar a sandbox (projeto GitLab e list ClickUp de teste) e o app OAuth no GitLab (escopo `api`, callback da nossa app) | Carlos | — | Ids da sandbox e as credenciais do app OAuth no `.env` |
+| FI-02 | Troca de regra (instrução do Carlos): `CLAUDE.md`, `ARCHITECTURE.md` (seção "Fase I" e a linha "Escrita de qualquer tipo"), `policy.json` (fase, `connector_write_allowed_files`, `write_endpoints_allowed`, área do Mensageiro), `_common.py` (escrita só nos escritores e só nos endpoints da lista), `guard_bash.py` (corrigir o falso positivo do `-d` do `docker compose`, mantendo bloqueada a escrita manual), padrões de token OAuth do GitLab, checklist de escrita do Revisor, a definição do agente Mensageiro e casos novos no `selfcheck.py` | Maestro | Aprovação do Carlos | `selfcheck.py` passa com os casos novos: endpoints da lista permitidos nos escritores, DELETE e endpoints fora da lista bloqueados, `docker compose up -d` junto com `curl` em localhost permitido |
+| FI-03 | Tabelas `task_issue_links` e `write_actions` numa migration | Arquivista | FI-02, F2-02 | `upgrade`/`downgrade` limpos; Revisor |
+| FI-04 | Escritores (`POST /projects/:id/issues` e `POST /v2/task/{id}/comment`) e o serviço da fila (`WRITES_ENABLED`, listas de permitidos, idempotência, auditoria), com os testes descritos acima | Mensageiro | FI-02, FI-03 | Suíte passa e falha contra a versão quebrada; Revisor; o Carlos vê os testes antes da integração |
+| FI-05 | `POST /tasks/{id}/gitlab-issue` (só logado e com as duas contas conectadas) e a leitura dos links e das ações da tarefa | Portal | FI-04, F2-03, F2-04 | `curl` com `WRITES_ENABLED=false` (simulado); Revisor |
+| FI-06 | No worker: a issue fechada por um MR enfileira o comentário na task (uma vez só por fechamento) | Mensageiro | FI-04, FM-15 | Na sandbox, um segundo sync não repete o comentário; Revisor |
+| FI-07 | Botão "Criar issue no GitLab" no modal, com a escolha do repositório, mais a issue associada e o estado das ações | Vitrine | FI-05 | typecheck, lint e build; Revisor |
+| FI-08 | Verificação ponta a ponta na sandbox com o `WRITES_ENABLED` ligado: criar a issue, mesclar um MR com `Closes #N`, conferir o comentário e o token revogado | Maestro e Carlos | todas | O Carlos confere no ClickUp e no GitLab |
 
 ## Acompanhamento
 
@@ -269,3 +326,17 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 | ML-06 | integrado | Branch `sincronista/tags-avatares` (4f5e8e4, f56cea2), integrada em 423a915. Aprovada pelo Revisor sem bloqueios; dois syncs reais `succeeded` (7 tags e 1 ícone; o segundo sem duplicar nem baixar de novo) |
 | ML-07 | integrado | Branch `portal/avatar-tags` (3855d90, 1dca762). Aprovada pelo Revisor sem bloqueios; aplicadas a allowlist de tipos e o CSP na rota do ícone |
 | ML-08 | integrado | Branch `vitrine/avatar-tags` (ecda4b8, 721dc09, 7f7c503), conferida pelo Maestro no diff. Ícones e tags aparecem só depois da ML-06 |
+| FM-12 | pendente | |
+| FM-13 | pendente | |
+| FM-14 | pendente | |
+| FM-15 | pendente | |
+| FM-16 | pendente | |
+| FM-17 | pendente | |
+| FI-01 | pendente | |
+| FI-02 | pendente | |
+| FI-03 | pendente | |
+| FI-04 | pendente | |
+| FI-05 | pendente | |
+| FI-06 | pendente | |
+| FI-07 | pendente | |
+| FI-08 | pendente | |

@@ -16,9 +16,19 @@ Work happens in two phases:
 - **Phase 1 (initial structure):** the bot token, structure, tasks, milestones, sync, read API and frontend. It has **no login and no time entries**, and all routes are open.
 - **Phase 2 (separate):** authentication (LDAP and ClickUp OAuth) and time entries.
 
-**Do not build Phase 2 pieces (auth, sessions, OAuth, `time_entries`) during Phase 1.** Sections marked "(Fase 2)" in `ARCHITECTURE.md` describe the agreed design for later.
+**Do not build Phase 2 pieces (auth, sessions, OAuth, `time_entries`) during Phase 1.** Phase 2 is now split: login and account connections (F2-01 to F2-04) come before Phase I, and time entries come after it. It still opens only when the user releases it. Sections marked "(Fase 2)" in `ARCHITECTURE.md` describe the agreed design for later.
 
-**Phase M (multi-integration)** starts alongside F1-11 and comes before Phase 2. It adds a sidebar that lists the connected apps (icons only, one per app) and brings in GitLab as a second source (gitlab.com or the company's self-hosted instance, whichever is available; the code treats both the same, and switching later follows FM-11): repositories, merge requests and commits, read-only, using a bot token. For now the apps are only shown side by side: no cross-tool data and no writes. Writing at specific points is planned for later and needs an explicit rule change first. The design is in `ARCHITECTURE.md` › "Fase M: multi-integração"; the tasks (FM-01 to FM-11) and a checklist are in `PLANO_DE_EXECUCAO.md` › "Fase M".
+**Phase M (multi-integration)** starts alongside F1-11 and comes before Phase 2. It adds a sidebar that lists the connected apps (icons only, one per app) and brings in GitLab as a second source (gitlab.com or the company's self-hosted instance, whichever is available; the code treats both the same, and switching later follows FM-11): repositories, merge requests and commits, read-only, using a bot token. For now the apps are only shown side by side: no cross-tool data and no writes. Writing at specific points is planned for later and needs an explicit rule change first. The design is in `ARCHITECTURE.md` › "Fase M: multi-integração"; the tasks (FM-01 to FM-11) and a checklist are in `PLANO_DE_EXECUCAO.md` › "Fase M". GitLab issues, read-only, extend Phase M (FM-12 to FM-17).
+
+**Phase I (ClickUp ↔ GitLab integration with writes) is planned, not open.** Agreed with the user on 2026-10-20:
+- From a task's modal in our web app, a logged-in person creates a GitLab issue linked to the task.
+- When an MR closes that issue, the worker **only comments** on the ClickUp task; the system never changes a task's status or closes it.
+- Writes use **each person's own OAuth token** (ClickUp and GitLab), never a bot, and only through a closed list of endpoints (`POST /projects/:id/issues` on GitLab, `POST /v2/task/{id}/comment` on ClickUp).
+- They also go through an audited write queue (`write_actions`) with a `WRITES_ENABLED` switch that defaults to off and only simulates, plus allowlists of projects and lists.
+- A new agent, **Mensageiro**, owns the writers (`connectors/*/writer.py`) and the queue (`actions/`).
+- Order: GitLab issues (read-only), then Phase 2 login and account connections only (F2-01 to F2-04, GitLab OAuth included), then Phase I. Phase 2 time entries come after Phase I.
+
+Until task FI-02 changes this file, `ARCHITECTURE.md`, the policy and the hooks, **the read-only rules below still apply in full**. The tasks, safeguards and test approach are in `PLANO_DE_EXECUCAO.md` › "Fase I".
 
 `PLANO_DE_EXECUCAO.md` lists every task with its owning agent (Maestro, the orchestrator; Alicerce, Batedor, Conector, Arquivista, Sincronista, Portal, Vitrine and Revisor; Guardião and Ponte join in Phase 2), dependencies, waves, file-ownership boundaries and done criteria. When acting as one of those agents, change only files in that agent's area, and report divergences from `ARCHITECTURE.md` to the Maestro instead of editing it.
 
@@ -58,6 +68,8 @@ Hooks enforce these rules. The policy is in `.claude/hooks/policy.json`; the hoo
 ## Testing
 
 By the user's request, no test suite until an MVP exists. Don't add tests or test tooling unless asked.
+
+The one approved exception is in Phase I, for the write code only (the writers, the write queue and its safeguards). Those tests check the exact captured request, include mandatory negative cases, and must fail against a deliberately broken writer. The user sees the cases and the pytest output before integration. The details are in `PLANO_DE_EXECUCAO.md` › "Fase I".
 
 ## Showing progress to the user
 
