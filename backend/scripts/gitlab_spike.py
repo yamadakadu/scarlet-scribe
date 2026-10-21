@@ -28,7 +28,7 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # backend/scripts/gitlab_spike.py → raiz do repositório (ou do worktree).
 ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
-MAX_REQUESTS = 50
+MAX_REQUESTS = 150
 PAGE_SIZE = 100
 TIMEOUT = 30.0
 
@@ -154,7 +154,9 @@ def main() -> int:
     iso = lambda d: d.strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
 
     try:
-        if "--tags-avatar" in sys.argv:
+        if "--issues" in sys.argv:
+            run_issues(sp, s)
+        elif "--tags-avatar" in sys.argv:
             run_tags_avatar(sp, s, verify)
         else:
             run(sp, s, host, now, iso)
@@ -451,6 +453,204 @@ def run_tags_avatar(sp: Spike, s: GitLabSpikeSettings, verify: str | bool) -> No
         for k in ("created_at", "committed_date", "authored_date"):
             print(f"    commit.{k}: {c.get(k, 'AUSENTE')}; tag.created_at: {t0.get('created_at', 'AUSENTE')}")
             break
+
+
+def _projects_for_issues(sp: Spike, s: GitLabSpikeSettings) -> list[dict]:
+    projects: list[dict] = []
+    # --only-project=ID: ignora o grupo de teste e le so esse projeto (GET; ex.: um projeto
+    # publico, para observar o formato quando o grupo de teste nao tem issues).
+    only = [a.split("=", 1)[1] for a in sys.argv if a.startswith("--only-project=")]
+    if only:
+        print(f"  MODO --only-project: {only}")
+    for gid in [] if only else s.gitlab_group_ids:
+        r = sp.get(f"/groups/{gid}/projects", include_subgroups="true", archived="false",
+                   per_page=PAGE_SIZE, page=1)
+        print(f"  GET /groups/{gid}/projects -> {r.status_code}")
+        if r.status_code == 200:
+            projects.extend(r.json())
+    for pid in only or s.gitlab_project_ids:
+        r = sp.get(f"/projects/{pid}")
+        print(f"  GET /projects/{pid} -> {r.status_code}")
+        if r.status_code == 200:
+            projects.append(r.json())
+    return projects[:25]
+
+
+def run_issues(sp: Spike, s: GitLabSpikeSettings) -> None:
+    """FM-12: issues e closed_by (rode com --issues). Nada de titulos, nomes ou e-mails."""
+    projects = _projects_for_issues(sp, s)
+    print(f"  projetos: {len(projects)}")
+    ratelimit: dict[str, dict] = {}
+
+    section("1. GET /projects/:id/issues?scope=all&state=all&per_page=100")
+    by_proj: dict[int, list[dict]] = {}
+    for p in projects:
+        pid = p["id"]
+        r = sp.get(f"/projects/{pid}/issues", scope="all", state="all", per_page=PAGE_SIZE, page=1)
+        rl = ratelimit_headers(r)
+        ratelimit.setdefault("issues", rl)
+        print(f"  projeto {pid}: -> {r.status_code} issues_enabled={p.get('issues_enabled')} "
+              f"issues_access_level={p.get('issues_access_level')}")
+        print(f"    {pag_headers(r)}")
+        if r.status_code != 200:
+            print(f"    corpo: chaves={sorted(r.json()) if r.headers.get('content-type','').startswith('application/json') and isinstance(r.json(), dict) else '-'}")
+            continue
+        by_proj[pid] = r.json()
+        print(f"    issues na pagina 1: {len(by_proj[pid])}")
+    allissues = [i for v in by_proj.values() for i in v]
+    print(f"\n  total de issues (pagina 1 de cada projeto): {len(allissues)}")
+    if allissues:
+        keys: dict[str, Counter] = {}
+        for i in allissues:
+            for k, v in i.items():
+                keys.setdefault(k, Counter())[tname(v)] += 1
+        print("  chaves -> tipos (contagem):")
+        for k in sorted(keys):
+            print(f"    {k}: {dict(keys[k])}")
+        print(f"  state: {dict(Counter(i.get('state') for i in allissues))}")
+        print(f"  issue_type: {dict(Counter(i.get('issue_type') for i in allissues))}")
+        print(f"  type: {dict(Counter(i.get('type') for i in allissues))}")
+        print(f"  confidential: {dict(Counter(i.get('confidential') for i in allissues))}")
+        labs = [l for i in allissues for l in (i.get('labels') or [])]
+        print(f"  labels: elemento tipo={dict(Counter(tname(l) for l in labs))}; "
+              f"issues com >=1 label={sum(bool(i.get('labels')) for i in allissues)}")
+        print(f"  assignees: tamanhos={dict(Counter(len(i.get('assignees') or []) for i in allissues))}; "
+              f"'assignee' (singular) presente={sum('assignee' in i for i in allissues)}")
+        a = next((i['author'] for i in allissues if isinstance(i.get('author'), dict)), {})
+        print(f"  author chaves: {sorted(a)}; e-mail em algum author: "
+              f"{any('email' in (i.get('author') or {}) for i in allissues)}")
+        asg = [x for i in allissues for x in (i.get('assignees') or [])]
+        print(f"  assignees chaves: {sorted(asg[0]) if asg else 'nenhum'}; e-mail em algum: "
+              f"{any('email' in x for x in asg)}")
+        print(f"  closed_at nao-nulo: {sum(bool(i.get('closed_at')) for i in allissues)}; "
+              f"closed_by nao-nulo: {sum(bool(i.get('closed_by')) for i in allissues)}")
+        cb = next((i['closed_by'] for i in allissues if isinstance(i.get('closed_by'), dict)), None)
+        print(f"  closed_by (campo da issue) chaves: {sorted(cb) if cb else 'nenhum observado'}")
+        by_state = Counter((i.get('state'), bool(i.get('closed_by'))) for i in allissues)
+        print(f"  (state, closed_by preenchido): {dict(by_state)}")
+        refs = next((i['references'] for i in allissues if isinstance(i.get('references'), dict)), {})
+        print(f"  references chaves: {sorted(refs)}; formato short: "
+              f"{'#<n>' if str(refs.get('short', '')).startswith('#') else 'outro'}; "
+              f"relative tem '#': {'#' in str(refs.get('relative', ''))}; full tem '#': {'#' in str(refs.get('full', ''))}")
+        print(f"  id != iid em {sum(i['id'] != i['iid'] for i in allissues)}/{len(allissues)}; "
+              f"project_id bate com o projeto consultado em "
+              f"{sum(i['project_id'] == pid for pid, v in by_proj.items() for i in v)}/{len(allissues)}")
+        wu = next((i.get('web_url', '') for i in allissues), '')
+        print(f"  web_url formato: mesma instancia={urlparse(wu).hostname == urlparse(sp.base).hostname}; "
+              f"caminho contem '/-/issues/': {'/-/issues/' in wu}")
+        for k in ("created_at", "updated_at", "closed_at"):
+            v = next((i[k] for i in allissues if i.get(k)), None)
+            print(f"  exemplo de formato {k}: {v}")
+        print(f"  merge_requests_count presente: {sum('merge_requests_count' in i for i in allissues)}; "
+              f"valores>0: {sum((i.get('merge_requests_count') or 0) > 0 for i in allissues)}")
+    # paginacao: projeto com X-Next-Page
+    section("1b. Paginacao")
+    pag_done = False
+    for pid, v in by_proj.items():
+        if len(v) >= PAGE_SIZE:
+            r = sp.get(f"/projects/{pid}/issues", scope="all", state="all", per_page=PAGE_SIZE, page=2)
+            print(f"  projeto {pid} pagina 2 -> {r.status_code} {pag_headers(r)}")
+            pag_done = True
+            break
+    if not pag_done:
+        print("  nenhum projeto enche a pagina de 100: a ultima pagina observada e a 1a.")
+    for pid, v in list(by_proj.items())[:1]:
+        r = sp.get(f"/projects/{pid}/issues", scope="all", state="all", per_page=PAGE_SIZE, page=1)
+        print(f"  ultima pagina (projeto {pid}): X-Next-Page vazio="
+              f"{r.headers.get('X-Next-Page', '<ausente>') == ''}; X-Total presente="
+              f"{'X-Total' in r.headers}; {pag_headers(r)}")
+        r = sp.get(f"/projects/{pid}/issues", scope="all", state="all", per_page=PAGE_SIZE, page=1,
+                   order_by="updated_at", sort="asc")
+        print(f"  order_by=updated_at&sort=asc -> {r.status_code}")
+
+    section("2. updated_after")
+    best = max(by_proj, key=lambda k: len(by_proj[k]), default=None)
+    if best is None or len(by_proj[best]) < 2:
+        print("  nao observado: nenhum projeto com >=2 issues.")
+    else:
+        ups = sorted(i["updated_at"] for i in by_proj[best])
+        print(f"  projeto {best}: {len(ups)} issues; updated_at min={ups[0]} max={ups[-1]}")
+        def n(**kw: Any) -> str:
+            r = sp.get(f"/projects/{best}/issues", scope="all", state="all", per_page=PAGE_SIZE, **kw)
+            return f"{r.status_code} n={len(r.json()) if r.status_code == 200 else '-'} {pag_headers(r)}"
+        mid = ups[len(ups) // 2]
+        print(f"  sem filtro: {n()}")
+        print(f"  updated_after={mid} (mediana): {n(updated_after=mid)}")
+        print(f"  updated_after={ups[-1]} (ultimo updated_at): {n(updated_after=ups[-1])}")
+        print(f"  updated_after=2099-01-01T00:00:00Z (futuro): {n(updated_after='2099-01-01T00:00:00Z')}")
+        print(f"  updated_after=2000-01-01T00:00:00Z (passado): {n(updated_after='2000-01-01T00:00:00Z')}")
+        print(f"  updated_before={mid}: {n(updated_before=mid)}")
+
+    section("3. Confidenciais")
+    conf = [i for i in allissues if i.get("confidential")]
+    print(f"  issues com confidential=true visiveis ao bot: {len(conf)}/{len(allissues)}")
+    if not conf:
+        print("  nao observado: nenhuma issue confidencial visivel (ou inexistente).")
+    r = sp.get(f"/projects/{projects[0]['id']}/issues", scope="all", state="all", confidential="true",
+               per_page=PAGE_SIZE) if projects else None
+    if r is not None:
+        print(f"  filtro confidential=true (1o projeto) -> {r.status_code} n={len(r.json()) if r.status_code == 200 else '-'}")
+
+    section("4. /projects/:id/issues/:iid/closed_by")
+    seen: Counter = Counter()
+    for pid, v in by_proj.items():
+        samples: list[tuple[str, dict]] = []
+        op = [i for i in v if i["state"] == "opened"][:2]
+        manual = [i for i in v if i["state"] == "closed" and not (i.get("merge_requests_count") or 0)][:2]
+        viamr = [i for i in v if i["state"] == "closed" and (i.get("merge_requests_count") or 0)][:3]
+        anymr = [i for i in v if i["state"] == "opened" and (i.get("merge_requests_count") or 0)][:2]
+        for tag, group in (("aberta", op), ("fechada sem MR relacionado", manual),
+                           ("fechada com MR relacionado", viamr), ("aberta com MR relacionado", anymr)):
+            for i in group:
+                samples.append((tag, i))
+        for tag, i in samples:
+            if seen[tag] >= 3:
+                continue
+            seen[tag] += 1
+            r = sp.get(f"/projects/{pid}/issues/{i['iid']}/closed_by")
+            ratelimit.setdefault("closed_by", ratelimit_headers(r))
+            line = f"  projeto {pid} iid {i['iid']} [{tag}] -> {r.status_code}"
+            if r.status_code == 200:
+                j = r.json()
+                line += f" tipo={tname(j)} n={len(j) if isinstance(j, list) else '-'}"
+                print(line)
+                if isinstance(j, list) and j:
+                    print(f"    MR campos: {sorted(j[0])}")
+                    print(f"    MR state: {dict(Counter(m.get('state') for m in j))}; "
+                          f"merged_at nao-nulo={sum(bool(m.get('merged_at')) for m in j)}; "
+                          f"project_id do MR == do projeto: {all(m.get('project_id') == pid for m in j)}")
+            else:
+                print(line)
+    if not seen:
+        print("  nao observado: nenhuma issue amostrada.")
+    print(f"  amostras por categoria: {dict(seen)}")
+    # inexistente
+    if best is not None:
+        r = sp.get(f"/projects/{best}/issues/999999999/closed_by")
+        print(f"  iid inexistente -> {r.status_code}")
+
+    section("5. Issues desativadas / sem acesso")
+    off = [p for p in projects if p.get("issues_enabled") is False]
+    print(f"  projetos com issues_enabled=false: {len(off)}; "
+          f"issues_access_level: {dict(Counter(p.get('issues_access_level') for p in projects))}")
+    for p in off[:3]:
+        r = sp.get(f"/projects/{p['id']}/issues", scope="all", state="all", per_page=PAGE_SIZE)
+        print(f"  projeto {p['id']} (desativado) -> {r.status_code} corpo chaves="
+              f"{sorted(r.json()) if r.status_code != 200 and isinstance(r.json(), dict) else '-'}")
+    if not off:
+        print("  nao observado: nenhum projeto com issues desativadas no grupo de teste.")
+    r = sp.get("/projects/999999999/issues", scope="all", state="all")
+    print(f"  projeto inexistente (999999999) -> {r.status_code}")
+    r = sp.get("/projects", membership="false", visibility="private", per_page=1, simple="true")
+    print(f"  (contexto) GET /projects?visibility=private -> {r.status_code}")
+
+    section("6. Rate limit")
+    for k, v in ratelimit.items():
+        print(f"  {k}: {v or 'nenhum header RateLimit/Retry-After'}")
+    r = sp.get(f"/projects/{projects[0]['id']}/merge_requests", per_page=1) if projects else None
+    if r is not None:
+        print(f"  merge_requests (comparacao): {ratelimit_headers(r) or 'nenhum'}")
+        print(f"  iguais aos de issues: {ratelimit_headers(r).keys() == ratelimit.get('issues', {}).keys()}")
 
 
 if __name__ == "__main__":
