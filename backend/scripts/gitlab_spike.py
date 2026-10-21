@@ -154,7 +154,9 @@ def main() -> int:
     iso = lambda d: d.strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
 
     try:
-        if "--issues" in sys.argv:
+        if "--confidential" in sys.argv:
+            run_confidential(sp, s)
+        elif "--issues" in sys.argv:
             run_issues(sp, s)
         elif "--tags-avatar" in sys.argv:
             run_tags_avatar(sp, s, verify)
@@ -474,6 +476,69 @@ def _projects_for_issues(sp: Spike, s: GitLabSpikeSettings) -> list[dict]:
         if r.status_code == 200:
             projects.append(r.json())
     return projects[:25]
+
+
+def run_confidential(sp: Spike, s: GitLabSpikeSettings) -> None:
+    """FM-12 (complemento): issue confidencial vista pelo bot (rode com --confidential).
+
+    So GET. Nao imprime titulo, descricao, nomes nem e-mails: so status, chaves e booleanos.
+    """
+    projects = _projects_for_issues(sp, s)
+    print(f"  projetos: {len(projects)}")
+
+    section("0. Papel do bot")
+    r = sp.get("/user")
+    bot_id = r.json().get("id") if r.status_code == 200 else None
+    print(f"  GET /user -> {r.status_code} (id lido: {bot_id is not None})")
+    for gid in s.gitlab_group_ids:
+        r = sp.get(f"/groups/{gid}/members/all/{bot_id}") if bot_id else None
+        if r is not None:
+            lvl = r.json().get("access_level") if r.status_code == 200 else None
+            print(f"  grupo {gid}: membro (herdado incluso) -> {r.status_code} access_level={lvl}")
+
+    for p in projects:
+        pid = p["id"]
+        section(f"1. projeto {pid}")
+        perms = p.get("permissions") or {}
+        pa = (perms.get("project_access") or {}).get("access_level")
+        ga = (perms.get("group_access") or {}).get("access_level")
+        print(f"  permissions.project_access={pa} permissions.group_access={ga}; "
+              f"visibility={p.get('visibility')} issues_enabled={p.get('issues_enabled')}")
+        if bot_id:
+            r = sp.get(f"/projects/{pid}/members/all/{bot_id}")
+            lvl = r.json().get("access_level") if r.status_code == 200 else None
+            print(f"  GET /projects/:id/members/all/<bot> -> {r.status_code} access_level={lvl}")
+
+        r = sp.get(f"/projects/{pid}/issues", scope="all", state="all", per_page=PAGE_SIZE, page=1)
+        print(f"  GET /issues scope=all state=all -> {r.status_code}")
+        if r.status_code != 200:
+            continue
+        items = r.json()
+        conf = [i for i in items if i.get("confidential")]
+        print(f"  total na pagina: {len(items)}; confidential=true: {len(conf)}; "
+              f"X-Total={r.headers.get('X-Total')}")
+        r2 = sp.get(f"/projects/{pid}/issues", scope="all", state="all", confidential="true",
+                    per_page=PAGE_SIZE)
+        print(f"  filtro confidential=true -> {r2.status_code} n={len(r2.json()) if r2.status_code == 200 else '-'}")
+        for i in conf[:3]:
+            iid = i["iid"]
+            print(f"  issue iid={iid}: state={i.get('state')} confidential={i.get('confidential')}")
+            print(f"    campos={len(i)}; chaves ausentes vs. uma issue comum: "
+                  f"{sorted(set(next((x for x in items if not x.get('confidential')), {})) - set(i))}")
+            print(f"    title presente={bool(i.get('title'))}; description presente={bool(i.get('description'))}; "
+                  f"author presente={isinstance(i.get('author'), dict)}; web_url presente={bool(i.get('web_url'))}; "
+                  f"labels={len(i.get('labels') or [])}")
+            r = sp.get(f"/projects/{pid}/issues/{iid}")
+            ok = r.status_code == 200
+            print(f"    GET /issues/{iid} -> {r.status_code}"
+                  + (f" confidential={r.json().get('confidential')}; description presente="
+                     f"{bool(r.json().get('description'))}" if ok else ""))
+            r = sp.get(f"/projects/{pid}/issues/{iid}/closed_by")
+            j = r.json() if r.status_code == 200 else None
+            print(f"    GET /issues/{iid}/closed_by -> {r.status_code}"
+                  + (f" n={len(j)}" if isinstance(j, list) else ""))
+        if not conf:
+            print("  nao observado: nenhuma issue confidencial visivel ao bot neste projeto.")
 
 
 def run_issues(sp: Spike, s: GitLabSpikeSettings) -> None:
