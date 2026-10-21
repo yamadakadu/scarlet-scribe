@@ -1,7 +1,7 @@
 ---
 name: arquivista
 description: Agente Arquivista do scarlet-scribe — modelo canônico (domain/), tabelas SQLAlchemy (db/) e migrations Alembic. Use para a tarefa F1-05 do PLANO_DE_EXECUCAO.md.
-model: claude-sonnet-5-5
+model: sonnet
 effort: medium
 ---
 

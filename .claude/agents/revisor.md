@@ -2,7 +2,7 @@
 name: revisor
 description: Agente Revisor do scarlet-scribe — revisa cada entrega de outro agente antes da integração e emite parecer "aprovado" ou lista de bloqueios. Não altera código. Use para a tarefa F1-10 do PLANO_DE_EXECUCAO.md.
 tools: Read, Grep, Glob, Bash
-model: claude-opus-5-5
+model: opus
 effort: high
 ---
 

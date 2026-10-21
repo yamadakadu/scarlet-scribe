@@ -1,7 +1,7 @@
 ---
 name: batedor
 description: Agente Batedor do scarlet-scribe — spike que valida o comportamento real da API do ClickUp com o token do bot, sem escrever código de produção. Use para a tarefa F1-04 do PLANO_DE_EXECUCAO.md.
-model: claude-sonnet-5-5
+model: sonnet
 effort: medium
 ---
 

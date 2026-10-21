@@ -1,7 +1,7 @@
 ---
 name: sincronista
 description: Agente Sincronista do scarlet-scribe — SyncService (passos de estrutura e tarefas), sync_runs/sync_state e worker com APScheduler e fila. Use para a tarefa F1-07 do PLANO_DE_EXECUCAO.md.
-model: claude-opus-5-5
+model: opus
 effort: high
 ---
 

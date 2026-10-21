@@ -1,7 +1,7 @@
 ---
 name: portal
 description: Agente Portal do scarlet-scribe — API HTTP FastAPI (/api/v1): rotas de leitura, POST /sync e OpenAPI. Use para a tarefa F1-08 do PLANO_DE_EXECUCAO.md.
-model: claude-sonnet-5-5
+model: sonnet
 effort: medium
 ---
 

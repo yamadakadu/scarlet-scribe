@@ -1,7 +1,7 @@
 ---
 name: alicerce
 description: Agente Alicerce do scarlet-scribe — infraestrutura e estrutura do repositório (monorepo, Docker Compose, pyproject, Alembic, config.py, .env.example). Use para a tarefa F1-01 do PLANO_DE_EXECUCAO.md.
-model: claude-sonnet-5-5
+model: sonnet
 effort: medium
 ---
 
