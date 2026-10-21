@@ -534,7 +534,7 @@ Decisões do Carlos (2026-10-15). A plataforma passa a reunir várias ferramenta
   | Merge requests | `GET /projects/:id/merge_requests?state=all&scope=all&updated_after=...` | O `updated_after` filtra de fato. `author`, `assignees` e `reviewers` trazem `id` e `username`, **sem e-mail** (só `public_email`, muitas vezes vazio) |
   | Commits | `GET /projects/:id/repository/commits?all=true&since=...` | **Decisão do Carlos (2026-10-15): todos os branches (`all=true`)**, para mostrar também o trabalho ainda não mesclado. No projeto testado, 44 commits contra 36 só do branch padrão, com o mesmo custo. Um commit visto em vários branches vem uma vez por sha. Traz `author_name` e `author_email` |
   | Membros do grupo | `GET /groups/:id/members/all` | O `read_api` permite. Sem e-mail privado. Fora do recorte atual |
-  | Issues (FM-12) | `GET /projects/:id/issues?scope=all&state=all&updated_after=...&order_by=updated_at&sort=asc` | Ver "Issues (FM-12 a FM-17)". Ao contrário dos commits, traz `X-Total` |
+  | Issues (FM-12) | `GET /projects/:id/issues?scope=all&state=all&updated_after=...` (ordem padrão, como nos MRs) | Ver "Issues (FM-12 a FM-17)". Ao contrário dos commits, traz `X-Total` |
   | MRs que fecham uma issue (FM-12) | `GET /projects/:id/issues/:iid/closed_by` | Lista de MRs completos; 404 para `iid` inexistente. Ver "Issues (FM-12 a FM-17)" |
 
   Todas as datas vêm em ISO 8601 com milissegundos e `Z`, e `updated_after`/`since` aceitam o mesmo formato.
@@ -622,8 +622,9 @@ Com o ClickUp pulado, `source`, `skipped` e `reason` ficam no nível de cima. O 
 | `GET /repositories` | `q` (em `name` ou `path_with_namespace`), `archived` (padrão `false`: só os ativos; `true`: só os arquivados) | Lista paginada, ordenada por `path_with_namespace` sem diferenciar maiúsculas |
 | `GET /merge-requests` | `repository_id`, `state` (repetível), `author_id`, `q` (no título), `updated_from` | Lista paginada, por `source_updated_at` decrescente |
 | `GET /commits` | `repository_id`, `from`, `to` (sobre `authored_at`), `q` (no título) | Lista paginada, por `authored_at` decrescente |
+| `GET /issues` (FM-16) | `repository_id`, `state` (repetível), `author_id`, `q` (no título) | Lista paginada, por `source_updated_at` decrescente; nunca traz as confidenciais. Ver "Issues (FM-12 a FM-17)" |
 
-Seguem as convenções de "API HTTP": prefixo `/api/v1`, `{ items, total }`, `limit`/`offset`, `deleted_at` filtrado, `raw` nunca sai e operationId = nome da função (`list_sources`, `list_repositories`, `list_merge_requests`, `list_commits`). Detalhes do contrato (decididos na FM-07):
+Seguem as convenções de "API HTTP": prefixo `/api/v1`, `{ items, total }`, `limit`/`offset`, `deleted_at` filtrado, `raw` nunca sai e operationId = nome da função (`list_sources`, `list_repositories`, `list_merge_requests`, `list_commits`, `list_issues`). Detalhes do contrato (decididos na FM-07):
 - **`/sources`:** cada item tem `id`, `name` ("ClickUp" ou "GitLab"), `enabled` e `last_synced_at`.
   - `enabled` vale, no ClickUp, quando token e team estão configurados; no GitLab, quando `gitlab_enabled` é verdadeiro.
   - `last_synced_at` é o maior `synced_at` das linhas da fonte (ClickUp: `tasks`; GitLab: `repositories`), contando também as removidas, ou `null`. É "quando os dados daquela fonte foram vistos pela última vez", não o horário do último run: se o passo da fonte falhar, o valor fica parado.
@@ -672,7 +673,7 @@ Extensão da Fase M, somente leitura, com o token `read_api` do bot. Pré-requis
   - também vêm `confidential` (booleano), `merge_requests_count`, `references` (`short`, `relative`, `full`), `web_url`, `milestone`, `due_date` e `description`. O formato do caminho de `web_url` varia entre projetos: não depender dele;
   - datas em ISO 8601 UTC com milissegundos e `Z`;
   - paginação por offset com `X-Next-Page`, vazio na última página. **`X-Total` vem**, mas o cliente não depende dele, como nas outras listagens;
-  - `order_by=updated_at&sort=asc` é aceito.
+  - `order_by=updated_at&sort=asc` é aceito, mas **não é usado**: com paginação por offset, uma issue atualizada durante a listagem vai para o fim e desloca as seguintes, e uma delas seria pulada sem erro (achado do Revisor na FM-14). A listagem usa a ordem padrão (`created_at` decrescente), em que uma atualização não move o item, como nos MRs.
 - **`updated_after` filtra de fato** e é inclusivo (`>=`). Somado ao `updated_before`, dá o total. É o filtro do incremental, como nos MRs.
 - **Confidenciais (a confirmar):** nenhuma observada. `?confidential=true` responde 200. O que o bot enxerga deve depender do papel dele no projeto.
 - **`GET /projects/:id/issues/:iid/closed_by`:** 200 com uma lista de MRs completos (os mesmos campos de `/merge_requests`). Issue aberta ou fechada à mão: lista vazia. Issue fechada com MR: o MR aparece, mas pode estar `closed` sem `merged_at`. **A presença na lista não prova o fechamento por MR.** O caso de um MR ainda aberto com `Closes #N` não foi observado **(a confirmar)**. `iid` inexistente: 404.
@@ -694,7 +695,7 @@ Extensão da Fase M, somente leitura, com o token `read_api` do bot. Pré-requis
 
 **Issues confidenciais (decisão do Carlos, 2026-10-21):** são sincronizadas e gravadas com `confidential = true`, mas **ficam fora da API** (nem o título, nem um indicador) até a Fase 2, porque na Fase 1 a API não tem login. A Fase 2 decide quem pode vê-las.
 
-**Conector (FM-14):** `CodeConnector.iter_issues(repository_id, *, updated_since=None) -> BatchListing[Issue]`, com as mesmas regras de `iter_merge_requests` (`full` e completa sem data, incremental com data; erros por recurso em `report.errors`; só 401 e erro de configuração saem como exceção), e uma consulta dos MRs que fecharam uma issue (`/issues/:iid/closed_by`), que devolve `MergeRequest` canônicos. O `raw` da issue fica reduzido aos campos usados, sem `description`.
+**Conector (FM-14):** `CodeConnector.iter_issues(repository_id, *, updated_since=None) -> BatchListing[Issue]`, com as mesmas regras de `iter_merge_requests` (`full` e completa sem data, incremental com data; erros por recurso em `report.errors`; só 401 e erro de configuração saem como exceção), e uma consulta dos MRs que fecharam uma issue (`/issues/:iid/closed_by`), que devolve `MergeRequest` canônicos (`fetch_issue_closed_by(repository_id, iid)`, sem filtrar por estado; um MR fora do formato levanta erro em vez de ser descartado, para não esconder um `merged`). Um 403/404 nessa consulta levanta `ConnectorResourceError` (em `connectors/base.py`, subclasse de `ConnectorError`), para que a FI-06 o distinga de outros erros sem importar tipos do GitLab. O `raw` da issue fica reduzido aos campos usados, sem `description`. A listagem usa a ordem padrão do GitLab (ver o spike acima).
 
 **Sync (FM-15):** passo de issues por repositório não arquivado, depois dos MRs, no mesmo modelo dos MRs: watermark `gitlab:issues:<id do projeto>` = maior `source_updated_at` com margem de 5 min, listagem `full` na primeira vez e a cada `SYNC_FULL_RECONCILE_HOURS` (exclusões só com `allows_deletions`), autores em `people` com `source = 'gitlab'`, e 403/404 sem nada recebido como "recurso indisponível". `stats.gitlab` ganha `issues` (contadores) e `issue_listings` por repositório. O sync **não** consulta o `closed_by` (isso é da FI-06).
 
