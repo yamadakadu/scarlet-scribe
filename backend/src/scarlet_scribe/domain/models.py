@@ -29,6 +29,13 @@ class MergeRequestState(StrEnum):
     LOCKED = "locked"
 
 
+class IssueState(StrEnum):
+    """Estados canônicos de uma issue; hoje iguais aos do GitLab."""
+
+    OPENED = "opened"
+    CLOSED = "closed"
+
+
 class SourceRecord(BaseModel):
     """Campos comuns a todo registro vindo de uma ferramenta."""
 
@@ -158,6 +165,44 @@ class MergeRequest(SourceRecord):
         return self
 
 
+class Issue(SourceRecord):
+    """Issue. `external_id` é o id global; `iid` é o número no repositório.
+
+    Labels, assignees e o usuário que fechou ficam só no `raw` (já reduzido
+    pelo mapper); a descrição não é guardada.
+    """
+
+    external_repository_id: str = Field(description="Id na origem do repositório")
+    iid: int
+    title: str
+    state: IssueState
+    confidential: bool = False
+    issue_type: str | None = Field(default=None, description="Tipo na origem, por exemplo 'issue'")
+    web_url: str | None = None
+    external_author_id: str | None = Field(
+        default=None, description="Id na origem do autor (uma Person)"
+    )
+    author: Person | None = Field(
+        default=None,
+        description="Dados do autor que vieram na própria issue, para o sync gravar em `people`",
+    )
+    created_at_source: AwareDatetime | None = None
+    closed_at: AwareDatetime | None = None
+    source_updated_at: AwareDatetime | None = Field(
+        default=None, description="Última alteração na origem; base do watermark do sync"
+    )
+
+    @model_validator(mode="after")
+    def _author_ids_agree(self) -> "Issue":
+        """Com `author`, `external_author_id` é o `external_id` dele (preenchido se vazio)."""
+        if self.author is not None:
+            if self.external_author_id is None:
+                self.external_author_id = self.author.external_id
+            elif self.external_author_id != self.author.external_id:
+                raise ValueError("external_author_id diverge de author.external_id")
+        return self
+
+
 class Commit(SourceRecord):
     """Commit. `external_id` é '<id do repositório>:<sha>'.
 
@@ -205,6 +250,8 @@ __all__ = [
     "Commit",
     "Container",
     "ContainerKind",
+    "Issue",
+    "IssueState",
     "MergeRequest",
     "MergeRequestState",
     "Person",

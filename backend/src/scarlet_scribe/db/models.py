@@ -24,7 +24,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from scarlet_scribe.db.base import Base, SyncedMixin, text_enum
-from scarlet_scribe.domain.models import ContainerKind, MergeRequestState
+from scarlet_scribe.domain.models import ContainerKind, IssueState, MergeRequestState
 from scarlet_scribe.domain.sync import SyncStatus, SyncTrigger
 
 
@@ -157,6 +157,7 @@ class RepositoryRow(SyncedMixin, Base):
     merge_requests: Mapped[list["MergeRequestRow"]] = relationship(
         back_populates="repository"
     )
+    issues: Mapped[list["IssueRow"]] = relationship(back_populates="repository")
     commits: Mapped[list["CommitRow"]] = relationship(back_populates="repository")
     tags: Mapped[list["RepositoryTagRow"]] = relationship(back_populates="repository")
     avatar: Mapped["RepositoryAvatarRow | None"] = relationship(
@@ -216,6 +217,40 @@ class MergeRequestRow(SyncedMixin, Base):
     source_updated_at: Mapped[datetime | None] = mapped_column(index=True)
 
     repository: Mapped[RepositoryRow] = relationship(back_populates="merge_requests")
+    author: Mapped[PersonRow | None] = relationship()
+
+
+class IssueRow(SyncedMixin, Base):
+    """Issue. `external_id` é o id global; `iid` é o número no repositório.
+
+    `author_id` aceita nulo e é preenchido pelo sync a partir de
+    `external_author_id`, como nos merge requests. O `(repository_id, iid)`
+    único já cobre as consultas por `repository_id`.
+    """
+
+    __tablename__ = "issues"
+
+    __table_args__ = (
+        UniqueConstraint("source", "external_id"),
+        UniqueConstraint("repository_id", "iid"),
+    )
+
+    repository_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("repositories.id"))
+    iid: Mapped[int]
+    title: Mapped[str] = mapped_column(Text)
+    state: Mapped[IssueState] = mapped_column(text_enum(IssueState, "state"))
+    confidential: Mapped[bool] = mapped_column(server_default=text("false"))
+    issue_type: Mapped[str | None] = mapped_column(Text)
+    web_url: Mapped[str | None] = mapped_column(Text)
+    author_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("people.id", ondelete="SET NULL"), index=True
+    )
+    external_author_id: Mapped[str | None] = mapped_column(Text)
+    created_at_source: Mapped[datetime | None]
+    closed_at: Mapped[datetime | None]
+    source_updated_at: Mapped[datetime | None] = mapped_column(index=True)
+
+    repository: Mapped[RepositoryRow] = relationship(back_populates="issues")
     author: Mapped[PersonRow | None] = relationship()
 
 
