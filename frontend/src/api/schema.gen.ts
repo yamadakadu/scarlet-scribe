@@ -275,6 +275,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Issues
+         * @description Mais recentemente alteradas primeiro.
+         *
+         *     Issues confidenciais nunca saem (nem como indicador) e as de repositórios
+         *     removidos ficam de fora.
+         */
+        get: operations["list_issues"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/commits": {
         parameters: {
             query?: never;
@@ -383,6 +406,47 @@ export interface components {
             /** @description Run de sync mais recente; nulo se nunca houve um ou se o banco não respondeu */
             latest_sync: components["schemas"]["SyncRunOut"] | null;
         };
+        /** IssueOut */
+        IssueOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Iid */
+            iid: number;
+            /** Title */
+            title: string;
+            state: components["schemas"]["IssueState"];
+            /** Issue Type */
+            issue_type: string | null;
+            /** Web Url */
+            web_url: string | null;
+            /** Created At Source */
+            created_at_source: string | null;
+            /** Closed At */
+            closed_at: string | null;
+            /** Source Updated At */
+            source_updated_at: string | null;
+            repository: components["schemas"]["RepositoryRef"];
+            author: components["schemas"]["MergeRequestAuthor"] | null;
+        };
+        /** IssuePage */
+        IssuePage: {
+            /** Items */
+            items: components["schemas"]["IssueOut"][];
+            /**
+             * Total
+             * @description Total de registros que atendem aos filtros, sem paginação
+             */
+            total: number;
+        };
+        /**
+         * IssueState
+         * @description Estados canônicos de uma issue; hoje iguais aos do GitLab.
+         * @enum {string}
+         */
+        IssueState: "opened" | "closed";
         /** MergeRequestAuthor */
         MergeRequestAuthor: {
             /**
@@ -1331,6 +1395,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MergeRequestPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Banco de dados indisponível */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorDetail"];
+                };
+            };
+        };
+    };
+    list_issues: {
+        parameters: {
+            query?: {
+                /** @description Repositório */
+                repository_id?: string | null;
+                /** @description Estado da issue; repita o parâmetro para vários */
+                state?: components["schemas"]["IssueState"][] | null;
+                /** @description Pessoa autora */
+                author_id?: string | null;
+                /** @description Busca no título, sem diferenciar maiúsculas */
+                q?: string | null;
+                /** @description Itens por página (máximo 200) */
+                limit?: number;
+                /** @description Itens a pular */
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssuePage"];
                 };
             };
             /** @description Validation Error */

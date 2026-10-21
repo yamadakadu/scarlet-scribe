@@ -4,6 +4,7 @@ import { ClickUpScreen } from './components/ClickUpScreen.tsx'
 import { LegacyRedirect } from './components/LegacyRedirect.tsx'
 import { Layout } from './components/Layout.tsx'
 import { CommitsPage } from './pages/CommitsPage.tsx'
+import { IssuesPage } from './pages/IssuesPage.tsx'
 import { MergeRequestsPage } from './pages/MergeRequestsPage.tsx'
 import { RepositoriesPage } from './pages/RepositoriesPage.tsx'
 import { NotFoundPage } from './pages/NotFoundPage.tsx'
@@ -31,6 +32,7 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: <Navigate to={gitlabPaths.repositories} replace /> },
           { path: GITLAB_ROUTES.mergeRequests, element: <MergeRequestsPage /> },
+          { path: GITLAB_ROUTES.issues, element: <IssuesPage /> },
           { path: GITLAB_ROUTES.commits, element: <CommitsPage /> },
           { path: GITLAB_ROUTES.repositories, element: <RepositoriesPage /> },
         ],

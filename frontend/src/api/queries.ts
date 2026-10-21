@@ -1,6 +1,6 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { endOfLocalDay, startOfLocalDay } from '../lib/dates.ts'
-import { api, unwrap, type MergeRequestState, type TaskOrder } from './client.ts'
+import { api, unwrap, type IssueState, type MergeRequestState, type TaskOrder } from './client.ts'
 
 export interface TaskFilters {
   q?: string
@@ -117,6 +117,35 @@ export function useMergeRequests(f: MergeRequestFilters) {
     queryFn: async () =>
       unwrap(
         await api.GET('/api/v1/merge-requests', {
+          params: {
+            query: {
+              repository_id: f.repositoryId,
+              state: f.state ? [f.state] : undefined,
+              q: f.q || undefined,
+              limit: f.limit,
+              offset: f.offset,
+            },
+          },
+        }),
+      ),
+  })
+}
+
+export interface IssueFilters {
+  repositoryId?: string
+  state?: IssueState
+  q?: string
+  limit: number
+  offset: number
+}
+
+export function useIssues(f: IssueFilters) {
+  return useQuery({
+    queryKey: ['issues', f],
+    placeholderData: keepPreviousData,
+    queryFn: async () =>
+      unwrap(
+        await api.GET('/api/v1/issues', {
           params: {
             query: {
               repository_id: f.repositoryId,
