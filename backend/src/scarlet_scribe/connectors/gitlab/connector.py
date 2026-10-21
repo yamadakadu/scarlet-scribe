@@ -13,6 +13,8 @@
   vão para `report.errors`, mas interrompem a busca.
 - MRs e commits: uma busca por repositório, com `report.parts` de uma entrada
   (`merge_requests` ou `commits`). Cada id (ou sha) sai uma vez por iteração.
+- Issues: como os MRs (busca `issues`). `fetch_issue_closed_by` é uma chamada por issue e
+  levanta erro de recurso (403/404) em vez de registrar em relatório.
 - Tags: `iter_tags` é sempre `full` (uma busca `tags`); completa e sem erros
   autoriza exclusões. Cada nome sai uma vez.
 - Ícone: `fetch_avatar` valida `Repository.avatar_url` (mesmo host e porta do
@@ -59,12 +61,13 @@ from scarlet_scribe.connectors.gitlab.mapper import (
     MappingError,
     commit_ref,
     map_commit,
+    map_issue,
     map_merge_request,
     map_repository,
     map_tag,
     tag_ref,
 )
-from scarlet_scribe.domain.models import Commit, MergeRequest, Repository, RepositoryAvatar, RepositoryTag
+from scarlet_scribe.domain.models import Commit, Issue, MergeRequest, Repository, RepositoryAvatar, RepositoryTag
 
 if TYPE_CHECKING:
     from scarlet_scribe.config import Settings
@@ -234,6 +237,57 @@ class GitLabConnector:
             ),
             mode=mode,
         )
+
+    # --- Issues ------------------------------------------------------------
+
+    def iter_issues(
+        self, repository_id: str, *, updated_since: datetime | None = None
+    ) -> BatchListing[Issue]:
+        """Issues de um repositório, `state=all&scope=all`: `incremental` com `updated_since`, `full` sem."""
+        repository_id = str(repository_id)
+        mode = ListingMode.FULL if updated_since is None else ListingMode.INCREMENTAL
+
+        def pages() -> AsyncIterator[GitLabPage[Any]]:
+            return self._client.iter_issue_pages(repository_id, updated_after=updated_since)
+
+        def convert(item: Any) -> Issue:
+            return map_issue(item, project_id=repository_id)
+
+        return BatchListing(
+            lambda report: self._batches(
+                report, "issues", "issue", repository_id, pages(), convert,
+                key=lambda item: str(item.id),
+            ),
+            mode=mode,
+        )
+
+    async def fetch_issue_closed_by(self, repository_id: str, iid: int) -> list[MergeRequest]:
+        """MRs de `/issues/:iid/closed_by`, sem filtrar por estado (o critério "merged" é de quem consome).
+
+        403/404 levantam `GitLabResourceError` (um `ConnectorResourceError`); 401 levanta
+        `GitLabAuthError`. Um item fora do formato levanta `GitLabResponseError`: descartá-lo
+        em silêncio poderia esconder um MR mesclado.
+        """
+        repository_id = str(repository_id)
+        path = f"/projects/{repository_id}/issues/{int(iid)}/closed_by"
+        result: list[MergeRequest] = []
+        seen: set[int] = set()
+        async for page in self._client.iter_issue_closed_by_pages(repository_id, iid):
+            if page.invalid:
+                raise GitLabResponseError(
+                    f"GET {path}: {len(page.invalid)} MR(s) fora do formato esperado "
+                    f"({page.invalid[0].reason})",
+                    path=path,
+                )
+            for item in page.items:
+                if item.id in seen:
+                    continue
+                seen.add(item.id)
+                try:
+                    result.append(map_merge_request(item, project_id=repository_id))
+                except MappingError as exc:
+                    raise GitLabResponseError(f"GET {path}: MR fora do formato esperado ({exc})", path=path) from None
+        return result
 
     # --- Commits -----------------------------------------------------------
 

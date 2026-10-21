@@ -5,6 +5,7 @@ Uso (a partir da raiz do repositório):
 
     uv run --directory backend python scripts/gitlab_amostra_canonica.py
         [--max-repos N] [--max-itens N] [--max-lotes N] [--desde-dias N] [--sem-mascara]
+        [--project-id ID]
 
 Somente leitura: todas as requisições são GET (o transport deste script recusa
 qualquer outro método e conta as requisições). O token e a URL vêm do ambiente
@@ -16,7 +17,11 @@ estão presentes). Ids, datas, estados, branches e os caminhos dos repositórios
 aparecem sempre.
 
 `--desde-dias N` pede só o que mudou nos últimos N dias (modo incremental).
-Os MRs e commits são buscados nos `--max-repos` primeiros repositórios.
+Os MRs, issues e commits são buscados nos `--max-repos` primeiros repositórios.
+
+`--project-id ID` também valida o mapper de issues num projeto avulso (por
+exemplo um projeto público, como 1794617): lista issues, mapeia algumas e chama
+`closed_by` de uma delas. Só mostra contagens e campos estruturais.
 """
 
 from __future__ import annotations
@@ -32,9 +37,14 @@ from typing import Any
 import httpx
 
 from scarlet_scribe.config import Settings
-from scarlet_scribe.connectors.base import AvatarUnavailable, ConnectorError, ListingReport
+from scarlet_scribe.connectors.base import (
+    AvatarUnavailable,
+    ConnectorError,
+    ConnectorResourceError,
+    ListingReport,
+)
 from scarlet_scribe.connectors.factory import create_code_connector
-from scarlet_scribe.domain.models import Commit, MergeRequest, Repository, RepositoryTag
+from scarlet_scribe.domain.models import Commit, Issue, MergeRequest, Repository, RepositoryTag
 
 
 class _ScriptSettings(Settings):
@@ -115,6 +125,59 @@ def print_merge_request(mr: MergeRequest, mask: Masker) -> None:
         print("      autor: None")
 
 
+def print_issue(issue: Issue, mask: Masker) -> None:
+    raw = issue.raw
+    print(f"    {issue.external_id}  iid={issue.iid}  repo={issue.external_repository_id}  "
+          f"state={issue.state.value}  confidencial={issue.confidential}  tipo={issue.issue_type!r}  "
+          f"titulo={mask(issue.title)}")
+    print(f"      url={'presente' if issue.web_url else 'None'}  raw: {len(raw)} chaves "
+          f"(description={'description' in raw})  labels={len(raw.get('labels', []))}  "
+          f"assignees={len(raw.get('assignees', []))}  closed_by={'presente' if raw.get('closed_by') else 'None'}")
+    print(f"      criado={fmt_dt(issue.created_at_source)}  atualizado={fmt_dt(issue.source_updated_at)}  "
+          f"closed={fmt_dt(issue.closed_at)}")
+    if issue.author is not None:
+        print(f"      autor {issue.author.external_id}  source={issue.author.source}  "
+              f"username={mask(issue.author.username)}  email={presence(issue.author.email)}")
+    else:
+        print("      autor: None")
+
+
+async def issues_section(
+    connector: Any, repo_id: str, args: argparse.Namespace, mask: Masker, since: datetime | None,
+    sink: list[Issue], *, closed_by_sample: bool = False,
+) -> None:
+    repo_issues: list[Issue] = []
+    listing = connector.iter_issues(repo_id, updated_since=since)
+    batches = 0
+    async for batch in listing:
+        batches += 1
+        repo_issues.extend(batch)
+        if batches >= args.max_lotes:
+            print(f"(iteração de issues interrompida pelo script após {batches} lote(s): --max-lotes)")
+            break
+    sink.extend(repo_issues)
+    print(f"[Issues] {len(repo_issues)} em {batches} lote(s); "
+          f"estados: {dict(Counter(i.state.value for i in repo_issues))}; "
+          f"confidenciais: {sum(i.confidential for i in repo_issues)}; "
+          f"com autor: {sum(i.author is not None for i in repo_issues)}; "
+          f"ids repetidos: {len(repo_issues) - len({i.external_id for i in repo_issues})}")
+    for issue in repo_issues[: args.max_itens]:
+        print_issue(issue, mask)
+    print_report("Issues", listing.report)
+    if closed_by_sample and repo_issues:
+        target = next((i for i in repo_issues if i.state.value == "closed"), repo_issues[0])
+        mrs = await connector.fetch_issue_closed_by(repo_id, target.iid)
+        print(f"  closed_by da issue {target.external_id} (iid={target.iid}, state={target.state.value}): "
+              f"{len(mrs)} MR(s); estados: {dict(Counter(m.state.value for m in mrs))}")
+        for mr in mrs[: args.max_itens]:
+            print_merge_request(mr, mask)
+        try:
+            await connector.fetch_issue_closed_by(repo_id, 2_000_000_000)
+            print("  closed_by de iid inexistente: SEM ERRO (inesperado)")
+        except ConnectorResourceError as exc:
+            print(f"  closed_by de iid inexistente: {type(exc).__name__} status={getattr(exc, 'status_code', None)}")
+
+
 def print_commit(commit: Commit, mask: Masker) -> None:
     print(f"    {commit.external_id[:30]}…  short={commit.short_sha}  titulo={mask(commit.title)}")
     print(f"      autor={mask(commit.author_name)}  email={presence(commit.author_email)}  "
@@ -142,6 +205,7 @@ async def run(args: argparse.Namespace) -> int:
     repositories: list[Repository] = []
     mrs: list[MergeRequest] = []
     commits: list[Commit] = []
+    issues: list[Issue] = []
     tags: list[RepositoryTag] = []
     try:
         async with create_code_connector(settings, transport=transport) as connector:
@@ -202,6 +266,8 @@ async def run(args: argparse.Namespace) -> int:
                     print_merge_request(mr, mask)
                 print_report("MRs", mr_listing.report)
 
+                await issues_section(connector, repo.external_id, args, mask, since, issues)
+
                 repo_commits: list[Commit] = []
                 commit_listing = connector.iter_commits(repo.external_id, since=since)
                 batches = 0
@@ -217,6 +283,10 @@ async def run(args: argparse.Namespace) -> int:
                 for commit in repo_commits[: args.max_itens]:
                     print_commit(commit, mask)
                 print_report("Commits", commit_listing.report)
+            if args.project_id:
+                print(f"\n--- Projeto avulso {args.project_id} (só issues) ---")
+                await issues_section(connector, args.project_id, args, mask, since, issues,
+                                     closed_by_sample=True)
     except ConnectorError as exc:
         print(f"Erro do conector: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
@@ -224,8 +294,8 @@ async def run(args: argparse.Namespace) -> int:
         print(f"\nRequisições GET: {transport.total} (status: {dict(transport.by_status)})")
 
     secret = settings.gitlab_api_token.get_secret_value()
-    people = [m.author for m in mrs if m.author is not None]
-    leaked = raw_has_secret([*repositories, *mrs, *commits, *tags, *people], secret)
+    people = [x.author for x in (*mrs, *issues) if x.author is not None]
+    leaked = raw_has_secret([*repositories, *mrs, *issues, *commits, *tags, *people], secret)
     print(f"raw sem o token: {'FALHOU' if leaked else 'ok'}")
     return 1 if leaked else 0
 
@@ -237,6 +307,7 @@ def main() -> int:
     parser.add_argument("--max-lotes", type=int, default=3, help="teto de lotes (páginas) por listagem")
     parser.add_argument("--desde-dias", type=int, default=0, help="só o que mudou nos últimos N dias")
     parser.add_argument("--sem-mascara", action="store_true", help="mostra títulos, nomes e usernames")
+    parser.add_argument("--project-id", default="", help="projeto avulso para validar issues e closed_by")
     return asyncio.run(run(parser.parse_args()))
 
 

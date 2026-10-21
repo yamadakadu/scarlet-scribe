@@ -70,6 +70,29 @@ class GitLabMergeRequest(GitLabModel):
     closed_at: str | None = None
 
 
+class GitLabIssue(GitLabModel):
+    """Issue. A `description` não é lida, então nunca chega ao `raw`.
+
+    O `closed_by` da issue é um usuário (os MRs vêm de `/issues/:iid/closed_by`).
+    `labels` (nomes), `assignees` e `closed_by` ficam só no `raw`.
+    """
+
+    id: int
+    iid: int
+    title: str
+    state: str
+    confidential: bool = False
+    issue_type: str | None = None
+    web_url: str | None = None
+    author: GitLabUser | None = None
+    labels: list[str] = Field(default_factory=list)
+    assignees: list[GitLabUser] = Field(default_factory=list)
+    closed_by: GitLabUser | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+    closed_at: str | None = None
+
+
 class GitLabCommit(GitLabModel):
     id: str  # sha completo
     short_id: str | None = None
