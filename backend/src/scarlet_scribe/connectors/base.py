@@ -25,6 +25,7 @@ from typing import Any, Protocol, Self, runtime_checkable
 from scarlet_scribe.domain.models import (
     Commit,
     Container,
+    Issue,
     MergeRequest,
     Person,
     Repository,
@@ -39,6 +40,10 @@ from scarlet_scribe.domain.models import (
 
 class ConnectorError(Exception):
     """Erro base de qualquer conector. A mensagem nunca contém credenciais."""
+
+
+class ConnectorResourceError(ConnectorError):
+    """Um recurso pontual não está acessível (HTTP 403 ou 404). Não é falha da fonte inteira."""
 
 
 class ConnectorAuthError(ConnectorError):
@@ -436,6 +441,31 @@ class CodeConnector(Protocol):
         """
         ...
 
+    def iter_issues(
+        self, repository_id: str, *, updated_since: datetime | None = None
+    ) -> BatchListing[Issue]:
+        """Issues de um repositório (todos os estados), em lotes.
+
+        - `updated_since=None`: modo `full`; com `datetime` com fuso,
+          `incremental` (só as alteradas depois desse instante). Uma listagem
+          incremental nunca autoriza exclusões.
+        - Cada `external_id` sai no máximo uma vez. `Issue.author` traz a
+          `Person` do autor. O `raw` não tem a descrição.
+        - Erros de recurso (403/404, inclusive issues desativadas no projeto)
+          vão para `report.errors`. `report.parts` tem a busca `issues`.
+        """
+        ...
+
+    async def fetch_issue_closed_by(self, repository_id: str, iid: int) -> list[MergeRequest]:
+        """MRs que fecham a issue `iid` (`/issues/:iid/closed_by`), como `MergeRequest`.
+
+        Sem filtro: a presença na lista não prova o fechamento por MR (critério
+        "merged" é de quem consome). Uma chamada por issue. 404 (`iid` ou
+        projeto inexistente) e 403 levantam `ConnectorResourceError`; 401 levanta
+        `ConnectorAuthError`. Resposta fora do formato levanta `ConnectorError`.
+        """
+        ...
+
     def iter_commits(
         self, repository_id: str, *, since: datetime | None = None
     ) -> BatchListing[Commit]:
@@ -481,6 +511,7 @@ __all__ = [
     "ConnectorAuthError",
     "ConnectorConfigError",
     "ConnectorError",
+    "ConnectorResourceError",
     "FetchIssue",
     "ListingMode",
     "ListingPart",

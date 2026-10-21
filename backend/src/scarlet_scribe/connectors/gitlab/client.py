@@ -49,10 +49,12 @@ from scarlet_scribe.connectors.base import (
     ConnectorAuthError,
     ConnectorConfigError,
     ConnectorError,
+    ConnectorResourceError,
 )
 from scarlet_scribe.connectors.gitlab.mapper import format_instant
 from scarlet_scribe.connectors.gitlab.schemas import (
     GitLabCommit,
+    GitLabIssue,
     GitLabMergeRequest,
     GitLabModel,
     GitLabProject,
@@ -122,7 +124,7 @@ class GitLabHTTPError(GitLabError):
         self.path = path
 
 
-class GitLabResourceError(GitLabHTTPError):
+class GitLabResourceError(GitLabHTTPError, ConnectorResourceError):
     """403 ou 404 num recurso específico. O chamador decide (o sync registra e segue)."""
 
 
@@ -494,6 +496,33 @@ class GitLabClient:
             params.append(("updated_after", format_instant(updated_after)))
         return self._iter_pages(
             f"/projects/{quote_id(project_id)}/merge_requests", params, GitLabMergeRequest
+        )
+
+    def iter_issue_pages(
+        self, project_id: str | int, *, updated_after: datetime | None = None
+    ) -> AsyncIterator[GitLabPage[GitLabIssue]]:
+        """`GET /projects/:id/issues?scope=all&state=all&order_by=updated_at&sort=asc[&updated_after=...]`.
+
+        `updated_after` (com fuso) vira o instante ISO 8601 em UTC.
+        """
+        params: Params = [
+            ("scope", "all"),
+            ("state", "all"),
+            ("order_by", "updated_at"),
+            ("sort", "asc"),
+        ]
+        if updated_after is not None:
+            params.append(("updated_after", format_instant(updated_after)))
+        return self._iter_pages(f"/projects/{quote_id(project_id)}/issues", params, GitLabIssue)
+
+    def iter_issue_closed_by_pages(
+        self, project_id: str | int, issue_iid: int
+    ) -> AsyncIterator[GitLabPage[GitLabMergeRequest]]:
+        """`GET /projects/:id/issues/:iid/closed_by`: MRs que fecham a issue (404 se o `iid` não existe)."""
+        return self._iter_pages(
+            f"/projects/{quote_id(project_id)}/issues/{int(issue_iid)}/closed_by",
+            [],
+            GitLabMergeRequest,
         )
 
     def iter_commit_pages(

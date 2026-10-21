@@ -30,6 +30,7 @@ from typing import Any
 
 from scarlet_scribe.connectors.gitlab.schemas import (
     GitLabCommit,
+    GitLabIssue,
     GitLabMergeRequest,
     GitLabModel,
     GitLabProject,
@@ -38,6 +39,8 @@ from scarlet_scribe.connectors.gitlab.schemas import (
 )
 from scarlet_scribe.domain.models import (
     Commit,
+    Issue,
+    IssueState,
     MergeRequest,
     MergeRequestState,
     Person,
@@ -158,6 +161,32 @@ def map_merge_request(mr: GitLabMergeRequest, *, project_id: int | str) -> Merge
         closed_at=parse_datetime(mr.closed_at, field="closed_at"),
         source_updated_at=parse_datetime(mr.updated_at, field="updated_at"),
         raw=raw_payload(mr),
+    )
+
+
+def map_issue(issue: GitLabIssue, *, project_id: int | str) -> Issue:
+    """Issue canônica. `raw` sem `description`; labels, assignees e `closed_by` ficam nele."""
+    try:
+        state = IssueState(issue.state)
+    except ValueError:
+        raise MappingError("state", "estado desconhecido") from None
+    author = map_person(issue.author) if issue.author is not None else None
+    return Issue(
+        source=SOURCE,
+        external_id=str(issue.id),
+        external_repository_id=repository_ref(project_id),
+        iid=issue.iid,
+        title=issue.title,
+        state=state,
+        confidential=issue.confidential,
+        issue_type=issue.issue_type,
+        web_url=issue.web_url,
+        external_author_id=author.external_id if author is not None else None,
+        author=author,
+        created_at_source=parse_datetime(issue.created_at, field="created_at"),
+        closed_at=parse_datetime(issue.closed_at, field="closed_at"),
+        source_updated_at=parse_datetime(issue.updated_at, field="updated_at"),
+        raw=raw_payload(issue),
     )
 
 
