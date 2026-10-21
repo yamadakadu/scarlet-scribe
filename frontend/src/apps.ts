@@ -26,6 +26,7 @@ export const CLICKUP_ROUTES = {
 
 export const GITLAB_ROUTES = {
   mergeRequests: 'merge-requests',
+  issues: 'issues',
   commits: 'commits',
   repositories: 'repositorios',
 } as const
@@ -54,6 +55,7 @@ export const APPS: AppDef[] = [
     nav: [
       { path: GITLAB_ROUTES.repositories, label: 'Repositórios' },
       { path: GITLAB_ROUTES.mergeRequests, label: 'Merge Requests' },
+      { path: GITLAB_ROUTES.issues, label: 'Issues' },
       { path: GITLAB_ROUTES.commits, label: 'Commits' },
     ],
   },
@@ -79,6 +81,7 @@ export const GITLAB = APPS[1]!
 /** Caminhos do GitLab derivados do basePath, para os links internos. */
 export const gitlabPaths = {
   mergeRequests: `${GITLAB.basePath}/${GITLAB_ROUTES.mergeRequests}`,
+  issues: `${GITLAB.basePath}/${GITLAB_ROUTES.issues}`,
   commits: `${GITLAB.basePath}/${GITLAB_ROUTES.commits}`,
   repositories: `${GITLAB.basePath}/${GITLAB_ROUTES.repositories}`,
   mergeRequestsOfRepository: (repositoryId: string) =>
