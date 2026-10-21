@@ -2,7 +2,7 @@
 
 Este plano diz o que será executado, por quem e em que ordem, para que o orquestrador acompanhe o andamento. O desenho técnico de cada item está em `ARCHITECTURE.md`; este documento não o repete.
 
-**Status:** Fase 1 em andamento (falta a F1-11). A Fase M (multi-integração: barra lateral de apps e GitLab) foi planejada em 2026-10-15 e começa junto com a F1-11. A arquitetura foi revisada com o Carlos; o andamento de cada tarefa está em "Acompanhamento".
+**Status:** Fase 1 e Fase M concluídas (F1-11 e FM-10 validadas pelo Carlos no navegador em 2026-10-21); falta só a FM-11, que depende do GitLab self-hosted. A Fase 2 começa quando o Carlos liberar, pela F2-01. A arquitetura foi revisada com o Carlos; o andamento de cada tarefa está em "Acompanhamento".
 
 ## Agentes
 
@@ -178,8 +178,8 @@ Decisões do Carlos (2026-10-15):
 - [x] FM-06: sync do GitLab (Sincronista), integrada em a076335
 - [x] FM-07: rotas `/sources`, `/repositories`, `/merge-requests` e `/commits` (Portal), integrada em 4cf2003
 - [x] FM-08: telas do GitLab e a sidebar lendo `/sources` (Vitrine), integrada em da33b47
-- [ ] FM-09: revisão de cada entrega (Revisor)
-- [ ] FM-10: verificação ponta a ponta (Maestro e Carlos)
+- [x] FM-09: revisão de cada entrega (Revisor)
+- [x] FM-10: verificação ponta a ponta (Maestro e Carlos), validada em 2026-10-21
 - [ ] FM-11: troca para o self-hosted, se a FM-02 começar no gitlab.com (Maestro e Carlos)
 
 ### Tarefas
@@ -307,7 +307,7 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 | F1-09a | integrado | Branch `vitrine/scaffold` (f90301a, 1282231), integrada em 358dda4 |
 | F1-09b | integrado | Branch `vitrine/telas-fase1` (5c77ab6, 4f90196), integrada em 67f9854. Sugestões do Revisor aguardando o Carlos |
 | F1-12 | integrado | Branch `alicerce/frontend-compose` (55d6e05). Pendente: ver `api` e `worker` subindo, o que depende da F1-07 e da F1-08 (fica para a F1-11) |
-| F1-11 | pendente | Inclui a conferência visual da FM-01 |
+| F1-11 | integrado | Validada pelo Carlos no navegador em 2026-10-21, com o stack completo no Docker Compose: barra lateral (conferência visual da FM-01), telas do ClickUp e do GitLab, sync manual `succeeded` (ClickUp e GitLab) e sync agendado rodando sozinho |
 | FM-01 | integrado | Branch `vitrine/sidebar-apps` (ddbc799, c19dc48, 1d67ee2), integrada em a237fc1. Aprovada pelo Revisor após 2 bloqueios corrigidos; os ajustes do Carlos (link do GitHub no header, controles menores, barra de sync fluida) foram conferidos pelo Maestro no diff. A conferência visual final fica para a F1-11 |
 | FM-02 | integrado | gitlab.com com personal access token só com `read_api` e o grupo de teste `yamada-group3`. Variáveis no `.env.example` em 47fb095 |
 | FM-03 | integrado | Branch `batedor/spike-gitlab` (3856d6b), integrada em 5a31907. Achados no `ARCHITECTURE.md` › "GitLab": `RateLimit-Reset` em epoch, commits sem `X-Total`, autor do MR sem e-mail. Pendentes: `Retry-After` no 429, group e project access tokens no gitlab.com e o que um bot Reporter enxerga |
@@ -316,8 +316,8 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 | FM-06 | integrado | Branch `sincronista/sync-gitlab` (1f6f834, aa1ca92), integrada em a076335. O Revisor bloqueou uma vez (um commit com data no futuro congelava o watermark), e a correção foi aprovada. Decisões do Carlos: pular o ClickUp quando não configurado; os commits empurrados tarde ficam como limitação conhecida |
 | FM-07 | integrado | Branch `portal/rotas-gitlab` (dd74814, d6ee014), integrada em 4cf2003. Aprovada pelo Revisor sem bloqueios, testada com dados numa transação desfeita. Ajustes do Carlos: `source` em `/people` (padrão `clickup`), `author_id` sem pessoas removidas, `/repositories` ordenado sem diferenciar maiúsculas. Ficaram para depois: `/sources` sem índice em `tasks.synced_at` e a busca de commits por sha ou autor |
 | FM-08 | integrado | Branch `vitrine/telas-gitlab` (1d44875, 70701d0), integrada em da33b47. O Revisor bloqueou uma vez (faltava "Todos" no estado; o sync não recarregava o GitLab), e a correção foi aprovada com os dados reais no navegador. Sugestões opcionais pendentes: textos de acessibilidade, marcar os arquivados no seletor e os contadores do GitLab no `SyncButton` |
-| FM-09 | pendente | |
-| FM-10 | pendente | |
+| FM-09 | integrado | Todas as entregas da Fase M (FM-01, FM-03 a FM-08, ML-01 a ML-09, FM-12 a FM-17) passaram pelo Revisor ou, nas mecânicas, pelo Maestro no diff |
+| FM-10 | integrado | Validada junto com a F1-11 (2026-10-21): a alternância entre ClickUp e GitLab funciona e os ícones aparecem |
 | FM-11 | pendente | Só se a FM-02 começar no gitlab.com |
 | ML-01 | integrado | Branch `batedor/spike-tags-avatar` (78248d1), integrada em 2378768. Ícone de projeto privado dá 401 sem token; o Carlos decidiu baixar os ícones no sync |
 | ML-02 | integrado | Branch `vitrine/ajustes-visuais` (58140a4), conferida pelo Maestro no diff |

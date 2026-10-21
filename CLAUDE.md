@@ -11,10 +11,10 @@ The user writes in Portuguese. Reply in Portuguese.
 ## Current state and phases
 
 The repo is a monorepo: the Python package lives in `backend/` (uv project, `src/` layout) and `frontend/` holds the Vite app. `PLANO_DE_EXECUCAO.md` › "Acompanhamento" has the status of each task. In short:
-- Phase 1 is done except F1-11, the end-to-end check with the user.
-- Phase M is integrated through FM-08, plus the improvements ML-01 to ML-09.
+- Phase 1 is done: the user validated F1-11, the end-to-end check, on 2026-10-21.
+- Phase M is done (FM-01 to FM-10), plus the improvements ML-01 to ML-09.
 - GitLab issues (FM-12 to FM-17) are integrated; items 3 to 5 of the FM-12 spike are still "(a confirmar)".
-- Pending: FM-09, FM-10, F1-11 and FM-11.
+- Pending: FM-11 (only once the self-hosted GitLab is available). Phase 2 opens when the user releases it, starting with F2-01.
 
 Work happens in two phases:
 - **Phase 1 (initial structure):** the bot token, structure, tasks, milestones, sync, read API and frontend. It has **no login and no time entries**, and all routes are open.
