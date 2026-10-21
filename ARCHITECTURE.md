@@ -588,8 +588,8 @@ O `SyncService` (FM-06) roda no mesmo run, sob o mesmo advisory lock, os passos 
 - com o GitLab ativo, o `error` de um run `partial` ou `failed` leva o prefixo da fonte (`clickup: ...`, `gitlab: ...`). Com só o ClickUp, o `error` e o `stats` saem como antes.
 
 **`stats`:** os campos do ClickUp continuam no nível de cima. A chave `stats.gitlab` tem:
-- os contadores `repositories`, `merge_requests`, `commits` e `people`;
-- `repository_listing`, mais `merge_request_listings` e `commit_listings` por id do repositório (`to_stats()` com `reconciled`, `watermark_advanced` e, nos commits, `since` e `initial_window`);
+- os contadores `repositories`, `merge_requests`, `issues`, `commits`, `tags` e `people`, e `avatars`/`avatar_errors`;
+- `repository_listing`, mais `merge_request_listings`, `issue_listings`, `commit_listings` e `tag_listings` por id do repositório (`to_stats()` com `reconciled`, `watermark_advanced` e, nos commits, `since` e `initial_window`);
 - `skipped_repositories`, `unavailable`, `errors`, `status` e `error`.
 
 Com o ClickUp pulado, `source`, `skipped` e `reason` ficam no nível de cima. O `SyncButton` ainda não mostra os contadores do GitLab.
@@ -600,15 +600,16 @@ Com o ClickUp pulado, `source`, `skipped` e `reason` ficam no nível de cima. O 
    - watermark `gitlab:merge_requests:<id do projeto>` = maior `source_updated_at`, com margem de 5 min;
    - na primeira vez e a cada `SYNC_FULL_RECONCILE_HOURS`, uma listagem `full` do repositório que marca `deleted_at` nos MRs que não voltaram, só com `allows_deletions` daquela listagem, sem a condição da estrutura que vale para as tarefas. Num repositório sem nenhum MR, o incremental usa `last_full_sync_at − 5 min` como base;
    - autores em `people` (`source='gitlab'`, upsert com `DO UPDATE`) e `author_id` pelo `external_author_id`.
-3. **Commits, por repositório não arquivado e com `default_branch`:**
+3. **Issues (FM-15), por repositório não arquivado, inclusive sem `default_branch`:** logo depois dos MRs do mesmo repositório e com as mesmas regras (o código usa um passo genérico para os dois). Ver "Issues (FM-12 a FM-17)" › "Sync (FM-15)".
+4. **Commits, por repositório não arquivado e com `default_branch`:**
    - todos os branches (`all=true`);
    - watermark `gitlab:commits:<id do projeto>` = maior `committed_at` (o `since` do GitLab filtra pela data do committer), com margem de 5 min;
    - na primeira vez, uma janela de 365 dias (a constante `INITIAL_COMMITS_WINDOW`);
    - commits nunca ganham `deleted_at`, e um sha repetido só atualiza.
 
 **Regras comuns aos passos:**
-- os watermarks só avançam com `report.complete` e **nunca passam do instante em que a listagem começou**: uma data no futuro (relógio errado do committer) não congela o repositório. Esse caso é sinalizado com `future_dated_commits` ou `future_dated_merge_requests` e um `warning`;
-- **"recurso indisponível":** um 403/404 na listagem de MRs, de commits ou de tags de um repositório, sem nada recebido, conta em `stats.gitlab.unavailable` e é logado em `warning`. Ele não deixa o run `partial` e não avança o watermark. É o caso de MRs desativados ou de repositório vazio. Qualquer outro erro deixa o run `partial`.
+- os watermarks só avançam com `report.complete` e **nunca passam do instante em que a listagem começou**: uma data no futuro (relógio errado do committer) não congela o repositório. Esse caso é sinalizado com `future_dated_commits`, `future_dated_merge_requests` ou `future_dated_issues` e um `warning`;
+- **"recurso indisponível":** um 403/404 na listagem de MRs, de issues, de commits ou de tags de um repositório, sem nada recebido, conta em `stats.gitlab.unavailable` e é logado em `warning`. Ele não deixa o run `partial` e não avança o watermark. É o caso de MRs desativados ou de repositório vazio. Qualquer outro erro deixa o run `partial`.
 
 **Limitações conhecidas:**
 - **Commits empurrados tarde se perdem** (decisão do Carlos, 2026-10-15: aceito por ora). O watermark é o maior `committed_at` entre todos os branches. Um commit feito localmente antes do watermark e enviado depois nunca entra; basta outra pessoa ter feito push no meio. Correções possíveis: rebuscar uma janela de alguns dias a cada run ou periodicamente, ou usar os eventos de push (exige spike).
