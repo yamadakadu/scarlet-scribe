@@ -15,6 +15,7 @@ from sqlalchemy import exc as sa_exc
 from scarlet_scribe.api.routes import (
     commits,
     health,
+    issues,
     merge_requests,
     milestones,
     people,
@@ -119,6 +120,7 @@ def create_app() -> FastAPI:
         sources,
         repositories,
         merge_requests,
+        issues,
         commits,
     ):
         # O /health declara o próprio 503 (com HealthOut), que prevalece.

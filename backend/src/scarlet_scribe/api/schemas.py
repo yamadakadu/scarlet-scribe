@@ -12,7 +12,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field
 
-from scarlet_scribe.domain.models import ContainerKind, MergeRequestState
+from scarlet_scribe.domain.models import ContainerKind, IssueState, MergeRequestState
 from scarlet_scribe.domain.sync import SyncStatus, SyncTrigger
 
 
@@ -238,6 +238,24 @@ class MergeRequestOut(ApiModel):
 
 
 class MergeRequestPage(Page[MergeRequestOut]):
+    pass
+
+
+class IssueOut(ApiModel):
+    id: uuid.UUID
+    iid: int
+    title: str
+    state: IssueState
+    issue_type: str | None
+    web_url: str | None
+    created_at_source: UtcDatetime | None
+    closed_at: UtcDatetime | None
+    source_updated_at: UtcDatetime | None
+    repository: RepositoryRef
+    author: MergeRequestAuthor | None
+
+
+class IssuePage(Page[IssueOut]):
     pass
 
 
