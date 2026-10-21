@@ -10,7 +10,11 @@ The user writes in Portuguese. Reply in Portuguese.
 
 ## Current state and phases
 
-Phase 1 is under way; `PLANO_DE_EXECUCAO.md` › "Acompanhamento" has the status of each task. The repo is a monorepo: the Python package lives in `backend/` (uv project, `src/` layout) and `frontend/` holds the Vite app. Already integrated: the infrastructure (`config.py`, `docker-compose.yml`, Alembic), the ClickUp HTTP client and schemas (`connectors/clickup/`), the canonical models, Phase 1 tables and migration `0001` (`domain/`, `db/`), and the frontend scaffold (`frontend/`). The mapper, sync, API and real screens are still to come.
+The repo is a monorepo: the Python package lives in `backend/` (uv project, `src/` layout) and `frontend/` holds the Vite app. `PLANO_DE_EXECUCAO.md` › "Acompanhamento" has the status of each task. In short:
+- Phase 1 is done except F1-11, the end-to-end check with the user.
+- Phase M is integrated through FM-08, plus the improvements ML-01 to ML-09.
+- GitLab issues (FM-12 to FM-17) are integrated; items 3 to 5 of the FM-12 spike are still "(a confirmar)".
+- Pending: FM-09, FM-10, F1-11 and FM-11.
 
 Work happens in two phases:
 - **Phase 1 (initial structure):** the bot token, structure, tasks, milestones, sync, read API and frontend. It has **no login and no time entries**, and all routes are open.
@@ -31,6 +35,8 @@ Work happens in two phases:
 Until task FI-02 changes this file, `ARCHITECTURE.md`, the policy and the hooks, **the read-only rules below still apply in full**. The tasks, safeguards and test approach are in `PLANO_DE_EXECUCAO.md` › "Fase I".
 
 `PLANO_DE_EXECUCAO.md` lists every task with its owning agent (Maestro, the orchestrator; Alicerce, Batedor, Conector, Arquivista, Sincronista, Portal, Vitrine and Revisor; Guardião and Ponte join in Phase 2), dependencies, waves, file-ownership boundaries and done criteria. When acting as one of those agents, change only files in that agent's area, and report divergences from `ARCHITECTURE.md` to the Maestro instead of editing it.
+
+The Maestro runs as a separate agent (the user's decision, 2026-10-21). The main session handles simple commands and one-off changes, relays the Maestro's reports to the user, and passes the user's decisions back to the Maestro.
 
 Agent definitions live in `.claude/agents/`. Each agent works in its own worktree on the branch `<agente>/<feature>`, and every commit subject starts with `<agente>/<feature>: `. The Maestro creates each worktree with `python3 .claude/scripts/novo_worktree.py <agente> <feature>`. The script branches from `main` into `.claude/worktrees/<agente>-<feature>` and links the worktree's `.env` to the main tree's `.env`, which worktrees don't otherwise get because it's gitignored. Each agent's model and effort are set in its frontmatter; when spawning, the Maestro varies them per task exactly as `PLANO_DE_EXECUCAO.md` › "Modelos e esforço dos agentes" says (that table is the instruction that allows passing `model` and `effort` per invocation).
 
@@ -85,6 +91,7 @@ uv add --directory backend <pkg>                   # add a dependency
 docker compose up -d postgres                      # start Postgres (dev defaults work without .env)
 docker compose run --rm migrate                    # apply migrations inside Docker
 uv run --directory backend alembic upgrade head    # apply migrations from the host (needs DATABASE_URL)
+docker compose up -d --build                       # full stack: postgres, migrate (runs once), api, worker, frontend
 docker compose down                                # stop everything (add -v to drop the database volume)
 ```
 
@@ -98,4 +105,4 @@ npm run typecheck            # tsc on both tsconfigs
 npm run lint                 # oxlint
 ```
 
-`config.py` reads the `.env` at the repo root wherever the command runs; `.env.example` documents every variable. Vite does not read that file: `VITE_API_PROXY_TARGET` comes from the process environment or `frontend/.env*`. The `api` and `worker` services start once F1-08 and F1-07 create their modules. To be added later: the full `docker compose up` with the frontend (F1-12).
+`config.py` reads the `.env` at the repo root wherever the command runs; `.env.example` documents every variable. Vite does not read that file: `VITE_API_PROXY_TARGET` comes from the process environment or `frontend/.env*`. With the full stack up, the frontend is on `:5173` (Vite dev server with HMR, proxying `/api/` to the `api` service) and the API on `:8000` (`/api/v1/docs`); `api` and `worker` start only after `migrate` finishes. The ports come from `FRONTEND_PORT` and `API_PORT`. After changing `frontend/package-lock.json`, run `docker compose up --build -V frontend`.
