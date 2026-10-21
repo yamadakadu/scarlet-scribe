@@ -502,18 +502,19 @@ Decisões do Carlos (2026-10-15). A plataforma passa a reunir várias ferramenta
 ### Navegação por app (front)
 
 - Uma **barra lateral** à esquerda lista só os aplicativos, cada um com o seu ícone (SVG inline, paths do Simple Icons, licença CC0), sem os grupos de telas de cada app. O nome do app vai em `title` e `aria-label`.
-- O app ativo fica destacado. As abas dele (no ClickUp: Projetos, Tarefas, Arquivadas e Marcos; no GitLab: Repositórios, Merge Requests e Commits) ficam no header, ao lado de `ApiStatus` e `SyncButton`.
+- O app ativo fica destacado. As abas dele (no ClickUp: Projetos, Tarefas, Arquivadas e Marcos; no GitLab: Repositórios, Merge Requests, Issues e Commits) ficam no header, ao lado de `ApiStatus` e `SyncButton`.
 - Um registro estático em `frontend/src/apps.ts` define, para cada app, `id`, `label`, `icon`, `basePath`, `nav` e `enabled`. **Desde a FM-08, o `enabled` vem de `GET /sources`.** Enquanto `/sources` carrega ou se falhar, vale o `enabled` estático, com o GitLab desabilitado. O `title` do item mostra o último sync ("nunca sincronizado" quando `null`) ou "não configurado".
 - As rotas têm o prefixo do app:
   - ClickUp: `/clickup/tarefas`, `/clickup/tarefas/:id`, `/clickup/arquivadas`, `/clickup/marcos` e `/clickup/projetos`;
-  - GitLab: `/gitlab/merge-requests`, `/gitlab/commits` e `/gitlab/repositorios`, com `/gitlab` levando a `/gitlab/repositorios`.
+  - GitLab: `/gitlab/merge-requests`, `/gitlab/issues`, `/gitlab/commits` e `/gitlab/repositorios`, com `/gitlab` levando a `/gitlab/repositorios`.
 
   As rotas antigas redirecionam para as novas, e `/` e `/clickup` vão para `/clickup/projetos`: cada app abre na primeira aba (decisão do Carlos, 2026-10-15).
 - **Telas do GitLab (FM-08):** os filtros ficam na URL, e mudar um filtro volta à página 1; a paginação é de 50 por página, exceto em Commits.
   - **Merge Requests:** filtros de repositório, estado (padrão "Abertos", sem parâmetro na URL, e "Todos" com `estado=todos`, que não manda `state`) e busca.
   - **Commits:** filtros de repositório, período e busca; seletor de 10, 25, 50 ou 100 por página (padrão 25, `por_pagina` na URL só quando diferente) e botão de copiar o sha.
+  - **Issues (FM-17):** filtros de repositório, estado (padrão "Abertas", sem parâmetro na URL, e "Todas" com `estado=todas`, que não manda `state`) e busca; 50 por página; colunas `#iid`, título (link para o GitLab), estado, tipo, repositório, autor, atualizada e fechada.
   - **Repositórios:** a alternância "Mostrar só arquivados" (`archived=true`) e o link "Ver", que abre os MRs do repositório com "Todos".
-- O "Sincronizar agora" continua global (as duas fontes) e, depois de um sync, recarrega também `sources`, `repositories`, `merge-requests` e `commits`.
+- O "Sincronizar agora" continua global (as duas fontes) e, depois de um sync, recarrega também `sources`, `repositories`, `merge-requests`, `issues` e `commits`.
 - Em telas estreitas, a barra lateral vira uma faixa de ícones no topo.
 - **Tarefa em modal (ML-03, decisão do Carlos):** a tarefa abre só em modal (`<dialog>`), sem tela cheia, na URL `/clickup/tarefas/:id`. Os links passam `location.state` com `background` (a location da lista) e `depth`; a lista de origem continua atrás com os filtros dela, e o acesso direto ou o F5 mostram Tarefas atrás. Fechar (X, Esc, backdrop) ou o Voltar do navegador voltam à lista e devolvem o foco ao link. A preferência `taskOpenMode` (`modal`, o padrão, ou `drawer`) fica em `frontend/src/lib/preferences.ts`, sem tela de configuração até a Fase 2.
 

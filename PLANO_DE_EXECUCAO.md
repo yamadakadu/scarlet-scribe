@@ -330,10 +330,10 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 | FM-12 | integrado | Branch `batedor/spike-issues` (ad98d54), integrada em fffea3d. O grupo de teste não tinha issues; formatos vistos num projeto público do gitlab.com. Achados e o critério de "fechada por MR" (decisão do Carlos) em `ARCHITECTURE.md` › "Issues". Pendentes (a confirmar): confidenciais, MR aberto com `Closes #N` e issues desativadas; o Carlos cria os casos no grupo de teste e o Batedor roda o script de novo |
 | ML-09 | integrado | Branch `alicerce/rate-limit-gitlab` (5a93e12), integrada em d73bb56, conferida pelo Maestro no diff. Padrão de `GITLAB_RATE_LIMIT_PER_MINUTE` de 600 para 100 (decisão do Carlos, 2026-10-21) |
 | FM-13 | integrado | Branch `arquivista/issues` (149b48d), integrada em db2ea95. Migration `0005`. Aprovada pelo Revisor sem bloqueios. Ao contrário de `merge_requests`, `issues` não tem índice só em `repository_id` (o `UNIQUE (repository_id, iid)` cobre). Sugestão pendente: extrair o validador de autor repetido em `MergeRequest` e `Issue`. Decisão do Carlos (2026-10-21) para a FM-16: issues confidenciais ficam fora da API até a Fase 2 |
-| FM-14 | em andamento | |
-| FM-15 | pendente | |
-| FM-16 | em andamento | |
-| FM-17 | pendente | |
+| FM-14 | integrado | Branch `conector/issues` (17b2d41, 749d77c), integrada em 37c163f. O Revisor bloqueou uma vez (`order_by=updated_at` com paginação por offset podia pular issues; o erro vinha do `ARCHITECTURE.md`, corrigido), e a correção foi aprovada. Nova `ConnectorResourceError` em `base.py`. Sugestões pendentes: capturar `ValidationError` em `fetch_issue_closed_by`, `quote_id` nas mensagens, docstring sobre 5xx/429/timeout e decidir se a tela ou a FI-06 filtram por `issue_type` |
+| FM-15 | em andamento | |
+| FM-16 | integrado | Branch `portal/issues` (2b61e1a), integrada em c0aaf68. Aprovada pelo Revisor sem bloqueios; confidenciais fora até no `total`. Sugestões pendentes: renomear `MergeRequestAuthor` para um nome neutro (afeta o cliente TS) e extrair o código comum com `list_merge_requests` |
+| FM-17 | integrado | Branch `vitrine/issues` (48b2a25), integrada em cbb4a97. Aprovada pelo Revisor sem bloqueios. Sugestões pendentes: rótulos em português para `issue_type`, cabeçalho `#` mais descritivo e a mensagem de vazio com `?pagina` além do fim (igual em MRs) |
 | FI-01 | pendente | |
 | FI-02 | pendente | |
 | FI-03 | pendente | |
