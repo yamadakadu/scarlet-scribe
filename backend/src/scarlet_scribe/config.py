@@ -44,8 +44,8 @@ class Settings(BaseSettings):
     gitlab_group_ids: Annotated[list[str], NoDecode] = Field(default_factory=list)
     gitlab_project_ids: Annotated[list[str], NoDecode] = Field(default_factory=list)
     gitlab_ca_bundle: str | None = None
-    # gitlab.com permite 2000/min (spike FM-03); 600 dá folga e serve ao self-hosted.
-    gitlab_rate_limit_per_minute: int = 600
+    # gitlab.com free aplica burst de 100 por usuário (spike FM-12); no self-hosted dá para aumentar pela variável.
+    gitlab_rate_limit_per_minute: int = 100
 
     # Sync
     sync_interval_minutes: int = 10
