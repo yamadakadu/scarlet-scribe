@@ -328,8 +328,8 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 | ML-07 | integrado | Branch `portal/avatar-tags` (3855d90, 1dca762). Aprovada pelo Revisor sem bloqueios; aplicadas a allowlist de tipos e o CSP na rota do ícone |
 | ML-08 | integrado | Branch `vitrine/avatar-tags` (ecda4b8, 721dc09, 7f7c503), conferida pelo Maestro no diff. Ícones e tags aparecem só depois da ML-06 |
 | FM-12 | integrado | Branch `batedor/spike-issues` (ad98d54), integrada em fffea3d. O grupo de teste não tinha issues; formatos vistos num projeto público do gitlab.com. Achados e o critério de "fechada por MR" (decisão do Carlos) em `ARCHITECTURE.md` › "Issues". Pendentes (a confirmar): confidenciais, MR aberto com `Closes #N` e issues desativadas; o Carlos cria os casos no grupo de teste e o Batedor roda o script de novo |
-| ML-09 | em andamento | Padrão de `GITLAB_RATE_LIMIT_PER_MINUTE` de 600 para 100 (burst do gitlab.com free visto na FM-12; decisão do Carlos, 2026-10-21). Alicerce, revisão proporcional |
-| FM-13 | em andamento | |
+| ML-09 | integrado | Branch `alicerce/rate-limit-gitlab` (5a93e12), integrada em d73bb56, conferida pelo Maestro no diff. Padrão de `GITLAB_RATE_LIMIT_PER_MINUTE` de 600 para 100 (decisão do Carlos, 2026-10-21) |
+| FM-13 | integrado | Branch `arquivista/issues` (149b48d), integrada em db2ea95. Migration `0005`. Aprovada pelo Revisor sem bloqueios. Ao contrário de `merge_requests`, `issues` não tem índice só em `repository_id` (o `UNIQUE (repository_id, iid)` cobre). Sugestão pendente: extrair o validador de autor repetido em `MergeRequest` e `Issue`. Decisão pendente para a FM-16: a API aberta mostra issues confidenciais? |
 | FM-14 | pendente | |
 | FM-15 | pendente | |
 | FM-16 | pendente | |
