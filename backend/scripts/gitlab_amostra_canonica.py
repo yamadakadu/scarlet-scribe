@@ -156,13 +156,11 @@ async def issues_section(
             print(f"(iteração de issues interrompida pelo script após {batches} lote(s): --max-lotes)")
             break
     sink.extend(repo_issues)
-    ordered = [i.source_updated_at for i in repo_issues if i.source_updated_at is not None]
     print(f"[Issues] {len(repo_issues)} em {batches} lote(s); "
           f"estados: {dict(Counter(i.state.value for i in repo_issues))}; "
           f"confidenciais: {sum(i.confidential for i in repo_issues)}; "
           f"com autor: {sum(i.author is not None for i in repo_issues)}; "
-          f"ids repetidos: {len(repo_issues) - len({i.external_id for i in repo_issues})}; "
-          f"ordem asc por updated_at: {ordered == sorted(ordered)}")
+          f"ids repetidos: {len(repo_issues) - len({i.external_id for i in repo_issues})}")
     for issue in repo_issues[: args.max_itens]:
         print_issue(issue, mask)
     print_report("Issues", listing.report)

@@ -501,16 +501,14 @@ class GitLabClient:
     def iter_issue_pages(
         self, project_id: str | int, *, updated_after: datetime | None = None
     ) -> AsyncIterator[GitLabPage[GitLabIssue]]:
-        """`GET /projects/:id/issues?scope=all&state=all&order_by=updated_at&sort=asc[&updated_after=...]`.
+        """`GET /projects/:id/issues?scope=all&state=all[&updated_after=...]`.
+
+        Ordem padrão da API, sem `order_by`: ordenar por `updated_at` com offset pode pular itens
+        alterados durante a listagem.
 
         `updated_after` (com fuso) vira o instante ISO 8601 em UTC.
         """
-        params: Params = [
-            ("scope", "all"),
-            ("state", "all"),
-            ("order_by", "updated_at"),
-            ("sort", "asc"),
-        ]
+        params: Params = [("scope", "all"), ("state", "all")]
         if updated_after is not None:
             params.append(("updated_after", format_instant(updated_after)))
         return self._iter_pages(f"/projects/{quote_id(project_id)}/issues", params, GitLabIssue)
