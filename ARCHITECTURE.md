@@ -534,10 +534,13 @@ Decisões do Carlos (2026-10-15). A plataforma passa a reunir várias ferramenta
   | Merge requests | `GET /projects/:id/merge_requests?state=all&scope=all&updated_after=...` | O `updated_after` filtra de fato. `author`, `assignees` e `reviewers` trazem `id` e `username`, **sem e-mail** (só `public_email`, muitas vezes vazio) |
   | Commits | `GET /projects/:id/repository/commits?all=true&since=...` | **Decisão do Carlos (2026-10-15): todos os branches (`all=true`)**, para mostrar também o trabalho ainda não mesclado. No projeto testado, 44 commits contra 36 só do branch padrão, com o mesmo custo. Um commit visto em vários branches vem uma vez por sha. Traz `author_name` e `author_email` |
   | Membros do grupo | `GET /groups/:id/members/all` | O `read_api` permite. Sem e-mail privado. Fora do recorte atual |
+  | Issues (FM-12) | `GET /projects/:id/issues?scope=all&state=all&updated_after=...&order_by=updated_at&sort=asc` | Ver "Issues (FM-12 a FM-17)". Ao contrário dos commits, traz `X-Total` |
+  | MRs que fecham uma issue (FM-12) | `GET /projects/:id/issues/:iid/closed_by` | Lista de MRs completos; 404 para `iid` inexistente. Ver "Issues (FM-12 a FM-17)" |
 
   Todas as datas vêm em ISO 8601 com milissegundos e `Z`, e `updated_after`/`since` aceitam o mesmo formato.
 - **Paginação (confirmada):** offset com `per_page=100`, seguindo `X-Next-Page` (presente e **vazio na última página**) ou o `Link rel="next"`. Na listagem de commits, `X-Total` e `X-Total-Pages` **nunca vêm**, nem com poucos itens: o cliente não usa o total em nenhuma listagem. A keyset funciona em `/projects`, mas não é usada (ver "Compatibilidade").
 - **Rate limit (confirmado no gitlab.com):** os headers vêm em toda resposta 200: `RateLimit-Limit` (2000 por minuto no gitlab.com, por usuário autenticado), `RateLimit-Remaining`, `RateLimit-Observed`, `RateLimit-Name` e `RateLimit-Reset`. **O `RateLimit-Reset` é um epoch absoluto em segundos**, não os segundos que faltam. O 429 não foi observado, então o `Retry-After` continua **(a confirmar)**. O cliente segue o padrão do ClickUp: limite preventivo `GITLAB_RATE_LIMIT_PER_MINUTE`, ajustado só para baixo pelos headers, e retries com backoff.
+  - **Burst observado no spike FM-12 (2026-10-21):** `RateLimit-Limit: 100` com `RateLimit-Name: burst_traffic_per_user_free_plan`, nas rotas de issues, de `closed_by` e de MRs. O gitlab.com free aplica um limite de rajada por usuário menor que os 2000/min vistos na FM-03. **Decisão do Carlos (2026-10-21):** o padrão de `GITLAB_RATE_LIMIT_PER_MINUTE` passa a ser **100**; no self-hosted, aumentar pela variável.
 - **Variáveis (FM-05):** `GITLAB_URL`, `GITLAB_API_TOKEN`, `GITLAB_GROUP_IDS`, `GITLAB_PROJECT_IDS`, `GITLAB_CA_BUNDLE` (opcional) e `GITLAB_RATE_LIMIT_PER_MINUTE`. Cada fonte é opcional: sem as variáveis do GitLab, o sync e a API seguem só com o ClickUp.
 - **Compatibilidade entre instâncias:** o gitlab.com roda sempre a versão mais nova, e o self-hosted pode ser mais antigo. Por isso:
   - o conector segue o caminho mais compatível: paginação por offset com `X-Next-Page`/`Link`, sem depender de keyset nem de `X-Total`. Recurso que dependa de versão só entra com checagem da versão (`GET /version`);
@@ -654,6 +657,39 @@ Decisões do Carlos (2026-10-15):
   - Sync (passo G5, depois dos commits): em cada repositório não arquivado e com `default_branch`, uma listagem completa a cada run (sem watermark); upsert por `(source, external_id)` (a tag que volta perde o `deleted_at`) e `deleted_at` nas que não voltaram, só com `allows_deletions`. Um 403/404 sem nada recebido é "recurso indisponível" (`stats.gitlab.unavailable.tags`). `stats.gitlab` ganha `tags` (`created`, `updated`, `deleted`) e `tag_listings` por repositório.
 - **Passo de ícones no sync (G4, ML-06):** roda logo depois dos repositórios, em todos os que vieram na listagem, inclusive os arquivados. Baixa (fora de transação, gravando numa transação curta) só quando o `avatar_url` difere do `source_url` guardado ou não há ícone guardado, então um ícone recusado é tentado de novo a cada run. Se o `avatar_url` mudou e o download falhou, o ícone antigo é apagado. `AvatarUnavailable` conta em `stats.gitlab.avatar_errors` (`{count, details: [{repository, reason}]}`) sem deixar o run `partial`; 401 encerra a fonte, como nos outros passos. `stats.gitlab.avatars` = `{downloaded, removed, unchanged}`. Sync real conferido em 2026-10-20: 7 tags e 1 ícone no primeiro run, e o segundo sem duplicar nem baixar de novo.
   - API: o item de `GET /commits` ganha `tags: string[]` (tags não removidas do mesmo `(repository_id, sha)`, por nome), numa subconsulta agregada, sem N+1.
+
+### Issues (FM-12 a FM-17)
+
+Extensão da Fase M, somente leitura, com o token `read_api` do bot. Pré-requisito da Fase I (`PLANO_DE_EXECUCAO.md` › "Issues do GitLab").
+
+**Spike FM-12 (2026-10-21, `backend/scripts/gitlab_spike.py --issues`, gitlab.com).** O grupo de teste não tinha nenhuma issue, então os formatos vieram de um projeto público do gitlab.com (lido só com GET e o mesmo token). Os itens marcados **(a confirmar)** serão refeitos no grupo de teste, depois que o Carlos criar os casos à mão.
+- **`GET /projects/:id/issues?scope=all&state=all`:**
+  - `id` é global e `iid` é por projeto; `project_id` bate com o projeto;
+  - `state` vale `opened` ou `closed`; vêm `issue_type` (`issue`) e `type` (`ISSUE`, em maiúsculas);
+  - `labels` é uma lista de strings (nomes);
+  - `author`, `assignees[]` e o `assignee` singular trazem `id`, `username`, `name`, `state`, `public_email` e outros, **sem `email`**;
+  - **o `closed_by` da issue é um usuário, não um MR.** Os MRs vêm de `/issues/:iid/closed_by`;
+  - também vêm `confidential` (booleano), `merge_requests_count`, `references` (`short`, `relative`, `full`), `web_url`, `milestone`, `due_date` e `description`. O formato do caminho de `web_url` varia entre projetos: não depender dele;
+  - datas em ISO 8601 UTC com milissegundos e `Z`;
+  - paginação por offset com `X-Next-Page`, vazio na última página. **`X-Total` vem**, mas o cliente não depende dele, como nas outras listagens;
+  - `order_by=updated_at&sort=asc` é aceito.
+- **`updated_after` filtra de fato** e é inclusivo (`>=`). Somado ao `updated_before`, dá o total. É o filtro do incremental, como nos MRs.
+- **Confidenciais (a confirmar):** nenhuma observada. `?confidential=true` responde 200. O que o bot enxerga deve depender do papel dele no projeto.
+- **`GET /projects/:id/issues/:iid/closed_by`:** 200 com uma lista de MRs completos (os mesmos campos de `/merge_requests`). Issue aberta ou fechada à mão: lista vazia. Issue fechada com MR: o MR aparece, mas pode estar `closed` sem `merged_at`. **A presença na lista não prova o fechamento por MR.** O caso de um MR ainda aberto com `Closes #N` não foi observado **(a confirmar)**. `iid` inexistente: 404.
+- **Issues desativadas (a confirmar):** não observado. Os projetos trazem `issues_enabled` e `issues_access_level`, então o sync pula os projetos com issues desligadas, sem chamar a rota. Projeto inexistente: 404.
+- **Rate limit:** os mesmos headers dos MRs, com o burst de 100 (ver "Rate limit" acima). O `closed_by` custa uma chamada por issue, então só é consultado quando necessário (FI-06).
+
+**Critério de "fechada por MR" (decisão do Carlos, 2026-10-21, para a FI-06):** a issue tem `state == closed` **e** o `closed_by` dela traz pelo menos um MR com `state == merged`. Qualquer outro caso (lista vazia, só MRs fechados sem mesclar ou abertos) não gera comentário no ClickUp.
+
+**Tabela `issues` (FM-13), esboço:** mesmas convenções das sincronizadas (`id` UUID, `source = 'gitlab'`, `external_id` = `id` global da issue, `raw`, `synced_at`, `deleted_at`, `UNIQUE (source, external_id)`).
+- `repository_id` (FK obrigatória) e `iid` (inteiro), únicos por `(repository_id, iid)`;
+- `title`, `state` (texto com `CHECK`: `opened` e `closed`), `confidential` (booleano, padrão `false`), `issue_type` (texto, aceita nulo) e `web_url`;
+- `author_id` (FK para `people`, aceita nulo) e `external_author_id`, no padrão dos MRs; o autor entra em `people` com `source = 'gitlab'`;
+- `created_at_source`, `closed_at` e `source_updated_at` (de `updated_at`);
+- labels, assignees e o `closed_by` (usuário) ficam só no `raw`, que o mapper reduz aos campos usados; a `description` não entra no `raw`;
+- índices: `issues (source_updated_at)` e `issues (author_id)`; o `(repository_id, iid)` único já cobre `repository_id`;
+- watermark em `sync_state` com `resource` = `gitlab:issues:<id do projeto>`.
+- Os MRs que fecharam a issue não ganham tabela na FM-13: a FI-06 consulta o `closed_by` quando precisar.
 
 ## Estrutura do repositório (alvo)
 

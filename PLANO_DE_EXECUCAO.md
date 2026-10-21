@@ -8,7 +8,7 @@ Este plano diz o que será executado, por quem e em que ordem, para que o orques
 
 | Agente | Papel | Área de atuação (arquivos que pode alterar) |
 |---|---|---|
-| **Maestro** | Orquestrador, que é a sessão principal. Distribui tarefas, acompanha dependências, integra as entregas e mantém `ARCHITECTURE.md`, `CLAUDE.md` e este plano atualizados. É o único que conversa com o Carlos | Documentação na raiz e integração das branches |
+| **Maestro** | Orquestrador. Distribui tarefas, acompanha dependências, integra as entregas e mantém `ARCHITECTURE.md`, `CLAUDE.md` e este plano atualizados. **Decisão do Carlos (2026-10-21):** roda como agente separado; a sessão principal fica com comandos simples e alterações pontuais e repassa ao Carlos o que o Maestro reporta, e as decisões dele ao Maestro | Documentação na raiz e integração das branches |
 | **Alicerce** | Infraestrutura e estrutura do repositório | `backend/pyproject.toml`, `backend/alembic.ini`, `backend/alembic/env.py`, `backend/alembic/README`, `backend/alembic/versions/.gitkeep` (a pasta e as migrations são do Arquivista), `docker-compose.yml`, `.env.example`, Dockerfiles, `backend/src/scarlet_scribe/config.py`. O `.gitignore` é do Maestro: mudanças nele são pedidas ao Maestro |
 | **Batedor** | Spike: valida o comportamento real da API do ClickUp com o token do bot. Não escreve código de produção | Só `backend/scripts/clickup_spike.py` (os demais scripts de `backend/scripts/` são do Conector) e o relatório que entrega ao Maestro |
 | **Conector** | Integração com o ClickUp: cliente HTTP, schemas, mapper e conector | `backend/src/scarlet_scribe/connectors/` |
@@ -216,6 +216,7 @@ Ajustes pedidos pelo Carlos (2026-10-15), lidos pelo Maestro numa lista própria
 | ML-06 | Passos de ícones (baixa só quando o `avatar_url` muda; falha não deixa `partial`) e de tags no `SyncService` (completo a cada run, exclusões com `allows_deletions`, "recurso indisponível" no 403/404) | Sincronista | ML-05 | C | Sync `succeeded` com tags; segundo sync não duplica; Revisor |
 | ML-07 | `avatar_updated_at` em `GET /repositories`, `GET /repositories/{id}/avatar` (do banco) e `tags: string[]` em `GET /commits` | Portal | ML-04 | C | `curl` nas duas rotas; OpenAPI gerado; Revisor |
 | ML-08 | Ícone (de `/repositories/{id}/avatar`, ou a inicial) nos repositórios e tags como badges nos commits; cliente TS regenerado | Vitrine | ML-07 | D | typecheck, lint e build; conferido pelo Maestro no diff |
+| ML-09 | Padrão de `GITLAB_RATE_LIMIT_PER_MINUTE` de 600 para 100 em `config.py` e `.env.example` (burst do gitlab.com free visto na FM-12; decisão do Carlos, 2026-10-21) | Alicerce | FM-12 | — | O `Settings` sem a variável dá 100; conferido pelo Maestro no diff |
 
 ## Issues do GitLab (extensão da Fase M, somente leitura)
 
@@ -326,8 +327,9 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 | ML-06 | integrado | Branch `sincronista/tags-avatares` (4f5e8e4, f56cea2), integrada em 423a915. Aprovada pelo Revisor sem bloqueios; dois syncs reais `succeeded` (7 tags e 1 ícone; o segundo sem duplicar nem baixar de novo) |
 | ML-07 | integrado | Branch `portal/avatar-tags` (3855d90, 1dca762). Aprovada pelo Revisor sem bloqueios; aplicadas a allowlist de tipos e o CSP na rota do ícone |
 | ML-08 | integrado | Branch `vitrine/avatar-tags` (ecda4b8, 721dc09, 7f7c503), conferida pelo Maestro no diff. Ícones e tags aparecem só depois da ML-06 |
-| FM-12 | pendente | |
-| FM-13 | pendente | |
+| FM-12 | integrado | Branch `batedor/spike-issues` (ad98d54), integrada em fffea3d. O grupo de teste não tinha issues; formatos vistos num projeto público do gitlab.com. Achados e o critério de "fechada por MR" (decisão do Carlos) em `ARCHITECTURE.md` › "Issues". Pendentes (a confirmar): confidenciais, MR aberto com `Closes #N` e issues desativadas; o Carlos cria os casos no grupo de teste e o Batedor roda o script de novo |
+| ML-09 | em andamento | Padrão de `GITLAB_RATE_LIMIT_PER_MINUTE` de 600 para 100 (burst do gitlab.com free visto na FM-12; decisão do Carlos, 2026-10-21). Alicerce, revisão proporcional |
+| FM-13 | em andamento | |
 | FM-14 | pendente | |
 | FM-15 | pendente | |
 | FM-16 | pendente | |
