@@ -1,4 +1,4 @@
-"""`SyncService`: executa um run de sync (ClickUp, passos 1 a 3; GitLab, G1 a G5).
+"""`SyncService`: executa um run de sync (ClickUp, passos 1 a 3; GitLab, G1 a G6).
 
 1. **Estrutura:** workspace, pessoas e containers. Containers que não vieram
    ganham `deleted_at`, só se a listagem da estrutura veio completa.
@@ -18,6 +18,12 @@ G2. **Merge requests, por repositório não arquivado:** reconciliação complet
     (`full`) na primeira vez e a cada `SYNC_FULL_RECONCILE_HOURS`, que marca
     `deleted_at` nos MRs do repositório que não voltaram; incremental no resto
     do tempo. Autores em `people` com a `source` da fonte.
+G6. **Issues (FM-15), logo depois dos MRs de cada repositório não arquivado:**
+    no mesmo modelo de G2 (watermark `<source>:issues:<id do projeto>`,
+    reconciliação completa na primeira vez e a cada `SYNC_FULL_RECONCILE_HOURS`,
+    autores em `people`). As confidenciais são gravadas como as outras (com
+    `confidential = true`); quem as esconde é a API. O `closed_by` não é
+    consultado aqui.
 G3. **Commits, por repositório não arquivado e não vazio:** desde o watermark
     (máximo de `committed_at`) menos 5 min; na primeira vez, só a janela de
     `INITIAL_COMMITS_WINDOW`. Commits nunca ganham `deleted_at`.
@@ -32,9 +38,10 @@ G5. **Tags, depois dos commits, por repositório não arquivado e não vazio:**
     listagem completa a cada run (sem watermark); `deleted_at` nas tags do
     repositório que não voltaram, só com `report.allows_deletions`.
 
-Um 403/404 na listagem de MRs, commits ou tags de um repositório é "recurso
-indisponível": não deixa o run parcial e não avança o watermark. O watermark de
-MRs e commits nunca passa do início da listagem (datas no futuro na origem).
+Um 403/404 na listagem de MRs, issues, commits ou tags de um repositório é
+"recurso indisponível": não deixa o run parcial e não avança o watermark. O
+watermark de MRs, issues e commits nunca passa do início da listagem (datas no
+futuro na origem).
 
 Cada fonte tem o próprio desfecho: uma fonte que falha (inclusive com 401)
 deixa o run `partial`, sem desfazer o que a outra gravou; o run só termina
@@ -95,6 +102,7 @@ from scarlet_scribe.connectors.factory import (
 from scarlet_scribe.db.models import (
     CommitRow,
     ContainerRow,
+    IssueRow,
     MergeRequestRow,
     PersonRow,
     RepositoryAvatarRow,
@@ -107,7 +115,14 @@ from scarlet_scribe.db.models import (
     task_assignees,
 )
 from scarlet_scribe.db.session import get_sessionmaker
-from scarlet_scribe.domain.models import MergeRequest, Person, Repository, RepositoryTag, Task
+from scarlet_scribe.domain.models import (
+    Issue,
+    MergeRequest,
+    Person,
+    Repository,
+    RepositoryTag,
+    Task,
+)
 from scarlet_scribe.domain.sync import SyncStatus
 
 logger = logging.getLogger(__name__)
@@ -129,8 +144,9 @@ INTERRUPTED_ERROR = "interrompido"
 # janela, para não bater no teto de páginas do conector em repositórios grandes.
 # É uma constante de propósito, não uma variável de ambiente.
 INITIAL_COMMITS_WINDOW = timedelta(days=365)
-# 403 (MRs desativados, sem permissão) ou 404 (repositório vazio) na listagem de
-# MRs, de commits ou de tags de um repositório: "recurso indisponível", não um erro.
+# 403 (MRs ou issues desativados, sem permissão) ou 404 (repositório vazio) na
+# listagem de MRs, issues, commits ou tags de um repositório: "recurso
+# indisponível", não um erro.
 UNAVAILABLE_STATUS_CODES = frozenset({403, 404})
 
 _TEXT_ARRAY = ARRAY(Text)
@@ -167,7 +183,7 @@ class _CodeSourceState:
     counters: dict[str, _Counter] = field(
         default_factory=lambda: {
             name: _Counter()
-            for name in ("repositories", "merge_requests", "commits", "tags", "people")
+            for name in ("repositories", "merge_requests", "issues", "commits", "tags", "people")
         }
     )
     # Ícones: baixados, apagados (`avatar_url` nulo ou download falho depois de
@@ -180,9 +196,10 @@ class _CodeSourceState:
     repository_listing: dict[str, Any] | None = None
     # Um relatório por repositório, pelo `external_id` do repositório.
     merge_request_listings: dict[str, dict[str, Any]] = field(default_factory=dict)
+    issue_listings: dict[str, dict[str, Any]] = field(default_factory=dict)
     commit_listings: dict[str, dict[str, Any]] = field(default_factory=dict)
     tag_listings: dict[str, dict[str, Any]] = field(default_factory=dict)
-    # Repositórios sem busca de MRs e commits (arquivados) ou só de commits (vazios).
+    # Repositórios sem busca de MRs, issues e commits (arquivados) ou só de commits (vazios).
     skipped: dict[str, int] = field(default_factory=lambda: {"archived": 0, "empty": 0})
     unavailable: list[dict[str, Any]] = field(default_factory=list)
     errors: list[dict[str, str]] = field(default_factory=list)
@@ -207,6 +224,7 @@ class _CodeSourceState:
         if self.repository_listing is not None:
             data["repository_listing"] = self.repository_listing
         data["merge_request_listings"] = dict(self.merge_request_listings)
+        data["issue_listings"] = dict(self.issue_listings)
         data["commit_listings"] = dict(self.commit_listings)
         data["tag_listings"] = dict(self.tag_listings)
         data["avatars"] = dict(self.avatars)
@@ -216,7 +234,7 @@ class _CodeSourceState:
         data["skipped_repositories"] = dict(self.skipped)
         data["unavailable"] = {
             kind: sum(1 for item in self.unavailable if item["resource"] == kind)
-            for kind in ("merge_requests", "commits", "tags")
+            for kind in ("merge_requests", "issues", "commits", "tags")
         } | {"details": list(self.unavailable)}
         if self.errors:
             data["errors"] = list(self.errors)
@@ -395,17 +413,19 @@ class SyncService:
         )
         if state.code is not None:
             code = state.code
-            repos, mrs, commits, tags = (
+            repos, mrs, issues, commits, tags = (
                 code.counters[name]
-                for name in ("repositories", "merge_requests", "commits", "tags")
+                for name in ("repositories", "merge_requests", "issues", "commits", "tags")
             )
             logger.info(
                 "run %s, %s: %s (repositórios: %d vistos, %d removidos; merge requests: %d "
-                "criados, %d atualizados, %d removidos; commits: %d criados, %d atualizados; "
+                "criados, %d atualizados, %d removidos; issues: %d criadas, %d atualizadas, "
+                "%d removidas; commits: %d criados, %d atualizados; "
                 "tags: %d criadas, %d atualizadas, %d removidas; ícones: %d baixados, "
                 "%d apagados, %d com falha)",
                 run_id, code.source, code.status().value, repos.created + repos.updated,
-                repos.deleted, mrs.created, mrs.updated, mrs.deleted, commits.created,
+                repos.deleted, mrs.created, mrs.updated, mrs.deleted, issues.created,
+                issues.updated, issues.deleted, commits.created,
                 commits.updated, tags.created, tags.updated, tags.deleted,
                 code.avatars["downloaded"], code.avatars["removed"], len(code.avatar_errors),
             )
@@ -639,7 +659,7 @@ class SyncService:
     # --- Fase M: fonte de código (GitLab) ---------------------------------------
 
     async def _run_code_source(self, run_id: uuid.UUID, state: _RunState) -> None:
-        """Passos G1 a G5, só com `settings.gitlab_enabled`. Nenhum erro sai daqui
+        """Passos G1 a G6, só com `settings.gitlab_enabled`. Nenhum erro sai daqui
         (exceto o cancelamento): eles ficam no desfecho da fonte, em `state.code`."""
         if not self._settings.gitlab_enabled:
             state.code_skipped = "não configurado"
@@ -697,18 +717,20 @@ class SyncService:
                 code.skipped["archived"] += 1
                 continue
 
-            # G2: merge requests do repositório.
-            resource = f"{source}:merge_requests:{repo.external_id}"
-            try:
-                await self._step_merge_requests(
-                    run_id, connector, source, repo, repository_ids, sync_states.get(resource),
-                    person_ids, code, state,
-                )
-            except (ConnectorAuthError, ConnectorConfigError) as exc:
-                code.fail("merge requests", exc)
-                return
-            except Exception as exc:
-                code.step_error(f"merge requests do repositório {repo.external_id}", exc)
+            # G2: merge requests do repositório; G6: issues do repositório (antes
+            # dos commits, porque um repositório vazio também pode ter issues).
+            for spec in (_MERGE_REQUESTS_STEP, _ISSUES_STEP):
+                resource = f"{source}:{spec.kind}:{repo.external_id}"
+                try:
+                    await self._step_repository_items(
+                        spec, run_id, connector, source, repo, repository_ids,
+                        sync_states.get(resource), person_ids, code, state,
+                    )
+                except (ConnectorAuthError, ConnectorConfigError) as exc:
+                    code.fail(spec.label, exc)
+                    return
+                except Exception as exc:
+                    code.step_error(f"{spec.label} do repositório {repo.external_id}", exc)
 
             # G3: commits do repositório (um repositório vazio não tem branch padrão).
             if repo.default_branch is None:
@@ -777,8 +799,9 @@ class SyncService:
         )
         return {row.external_id: row.id for row in rows}
 
-    async def _step_merge_requests(
+    async def _step_repository_items(
         self,
+        spec: _ItemStep,
         run_id: uuid.UUID,
         connector: CodeConnector,
         source: str,
@@ -789,21 +812,22 @@ class SyncService:
         code: _CodeSourceState,
         state: _RunState,
     ) -> None:
-        """MRs de um repositório: reconciliação completa (que marca exclusões) ou
-        incremental, no padrão das tarefas, com watermark próprio do repositório."""
-        resource = f"{source}:merge_requests:{repo.external_id}"
+        """MRs (G2) ou issues (G6) de um repositório: reconciliação completa (que
+        marca exclusões) ou incremental, no padrão das tarefas, com watermark
+        próprio do repositório (`<source>:<spec.kind>:<id do projeto>`)."""
+        resource = f"{source}:{spec.kind}:{repo.external_id}"
         watermark = sync_state.watermark if sync_state else None
         reconcile = self._code_reconcile_due(sync_state)
         updated_since: datetime | None = None
         if not reconcile:
-            # Sem watermark (nenhum MR visto ainda), a base é o início da última
+            # Sem watermark (nenhum item visto ainda), a base é o início da última
             # reconciliação completa: o que mudou depois dela ainda não foi visto.
             base = watermark or sync_state.last_full_sync_at  # type: ignore[union-attr]
             updated_since = base - INCREMENTAL_OVERLAP  # type: ignore[operator]
 
         listing_started_at = datetime.now(UTC)
-        listing = connector.iter_merge_requests(repo.external_id, updated_since=updated_since)
-        counter = code.counters["merge_requests"]
+        listing = spec.iterate(connector, repo.external_id, updated_since)
+        counter = code.counters[spec.kind]
         seen: set[str] = set()
         max_updated: datetime | None = None
         # Autores gravados nesta transação; só entram em `person_ids` depois do commit.
@@ -811,27 +835,32 @@ class SyncService:
 
         async with self._sessionmaker() as session, session.begin():
             async for batch in listing:
-                mrs = _dedupe(batch)
-                if not mrs:
+                items = _dedupe(batch)
+                if not items:
                     continue
-                for mr in mrs:
-                    seen.add(mr.external_id)
-                    if mr.source_updated_at and (max_updated is None or mr.source_updated_at > max_updated):
-                        max_updated = mr.source_updated_at
-                authors = await _upsert_authors(session, source, mrs, person_ids, new_people, code)
+                for item in items:
+                    seen.add(item.external_id)
+                    if item.source_updated_at and (
+                        max_updated is None or item.source_updated_at > max_updated
+                    ):
+                        max_updated = item.source_updated_at
+                authors = await _upsert_authors(session, source, items, person_ids, new_people, code)
                 rows = await _upsert(
                     session,
-                    MergeRequestRow,
+                    spec.model,
                     [
                         _record(
-                            mr,
-                            repository_id=repository_ids[mr.external_repository_id],
-                            author_id=authors.get(mr.external_author_id) if mr.external_author_id else None,
-                            **{column: getattr(mr, column) for column in _MERGE_REQUEST_COLUMNS},
+                            item,
+                            repository_id=repository_ids[item.external_repository_id],
+                            author_id=(
+                                authors.get(item.external_author_id)
+                                if item.external_author_id else None
+                            ),
+                            **{column: getattr(item, column) for column in spec.columns},
                         )
-                        for mr in mrs
+                        for item in items
                     ],
-                    update_columns=(*_MERGE_REQUEST_COLUMNS, "repository_id", "author_id", "raw"),
+                    update_columns=(*spec.columns, "repository_id", "author_id", "raw"),
                 )
                 counter.add_upserted(rows)
 
@@ -840,17 +869,17 @@ class SyncService:
             unavailable = _resource_unavailable(report)
             reconciled = advanced = False
             if unavailable:
-                code.note_unavailable("merge_requests", repo.external_id, report)
+                code.note_unavailable(spec.kind, repo.external_id, report)
                 listing_stats["unavailable"] = True
             else:
                 if reconcile or report.is_full:
                     skip_reason = _code_deletions_blocker(
-                        report, requested_full=reconcile, what="merge requests"
+                        report, requested_full=reconcile, what=spec.label
                     )
                     if skip_reason is None:
-                        counter.deleted += await _mark_deleted_merge_requests(
-                            session, source, repository_ids[repo.external_id],
-                            seen | report.discarded_ids,
+                        counter.deleted += await _mark_deleted_in_repository(
+                            session, spec.model.__tablename__, source,
+                            repository_ids[repo.external_id], seen | report.discarded_ids,
                         )
                         reconciled = True
                     else:
@@ -860,10 +889,10 @@ class SyncService:
                 # O watermark só avança com a listagem completa; nunca anda para
                 # trás nem passa do início da listagem (data no futuro na origem).
                 if max_updated is not None and max_updated > listing_started_at:
-                    listing_stats["future_dated_merge_requests"] = True
+                    listing_stats[f"future_dated_{spec.kind}"] = True
                     logger.warning(
-                        "%s: MRs do repositório %s com data no futuro; watermark limitado "
-                        "ao início da listagem", source, repo.external_id,
+                        "%s: %s do repositório %s com data no futuro; watermark limitado "
+                        "ao início da listagem", source, spec.short, repo.external_id,
                     )
                     max_updated = listing_started_at
                 new_watermark = watermark
@@ -877,19 +906,19 @@ class SyncService:
                 advanced = report.complete and new_watermark != watermark
             listing_stats["watermark_advanced"] = advanced
             listing_stats["reconciled"] = reconciled
-            code.merge_request_listings[repo.external_id] = listing_stats
+            getattr(code, spec.listings_attr)[repo.external_id] = listing_stats
             await _save_progress(session, run_id, state)
 
         person_ids.update(new_people)
         if not unavailable and not report.complete:
             code.partial = True
             logger.warning(
-                "%s: MRs do repositório %s parciais (%d erro(s)); watermark mantido",
-                source, repo.external_id, len(report.errors),
+                "%s: %s do repositório %s parciais (%d erro(s)); watermark mantido",
+                source, spec.short, repo.external_id, len(report.errors),
             )
         logger.info(
-            "%s: repositório %s, MRs em modo %s: %d recebido(s)%s",
-            source, repo.external_id, report.mode.value, len(seen),
+            "%s: repositório %s, %s em modo %s: %d recebido(s)%s",
+            source, repo.external_id, spec.short, report.mode.value, len(seen),
             " (reconciliado)" if reconciled else "",
         )
 
@@ -1104,8 +1133,9 @@ class SyncService:
             else:
                 skip_reason = _code_deletions_blocker(report, requested_full=True, what="tags")
                 if skip_reason is None:
-                    counter.deleted += await _mark_deleted_tags(
-                        session, source, repository_id, seen | report.discarded_ids
+                    counter.deleted += await _mark_deleted_in_repository(
+                        session, "repository_tags", source, repository_id,
+                        seen | report.discarded_ids,
                     )
                     reconciled = True
                 else:
@@ -1127,9 +1157,9 @@ class SyncService:
         )
 
     def _code_reconcile_due(self, sync_state: SyncStateRow | None) -> bool:
-        """Reconciliação completa dos MRs de um repositório: na primeira vez e a
+        """Reconciliação completa dos MRs ou issues de um repositório: na primeira vez e a
         cada `SYNC_FULL_RECONCILE_HOURS`. Diferente das tarefas, não exige
-        watermark: um repositório sem MRs fica no incremental desde a última
+        watermark: um repositório sem itens fica no incremental desde a última
         reconciliação."""
         if sync_state is None or sync_state.last_full_sync_at is None:
             return True
@@ -1262,6 +1292,58 @@ _MERGE_REQUEST_COLUMNS = (
     "closed_at",
     "source_updated_at",
 )
+_ISSUE_COLUMNS = (
+    "iid",
+    "title",
+    "state",
+    "confidential",
+    "issue_type",
+    "web_url",
+    "external_author_id",
+    "created_at_source",
+    "closed_at",
+    "source_updated_at",
+)
+
+
+@dataclass(frozen=True)
+class _ItemStep:
+    """Um passo por repositório com watermark e reconciliação (G2 e G6).
+
+    `kind` é o nome do recurso em `sync_state` e dos contadores; `label` e
+    `short` vão para erros e logs; `listings_attr` é o campo de
+    `_CodeSourceState` com os relatórios por repositório.
+    """
+
+    kind: str
+    label: str
+    short: str
+    model: type
+    columns: tuple[str, ...]
+    listings_attr: str
+    iterate: Callable[[CodeConnector, str, datetime | None], Any]
+
+
+_MERGE_REQUESTS_STEP = _ItemStep(
+    kind="merge_requests",
+    label="merge requests",
+    short="MRs",
+    model=MergeRequestRow,
+    columns=_MERGE_REQUEST_COLUMNS,
+    listings_attr="merge_request_listings",
+    iterate=lambda connector, repo_id, since: connector.iter_merge_requests(
+        repo_id, updated_since=since
+    ),
+)
+_ISSUES_STEP = _ItemStep(
+    kind="issues",
+    label="issues",
+    short="issues",
+    model=IssueRow,
+    columns=_ISSUE_COLUMNS,
+    listings_attr="issue_listings",
+    iterate=lambda connector, repo_id, since: connector.iter_issues(repo_id, updated_since=since),
+)
 _COMMIT_COLUMNS = (
     "sha",
     "short_sha",
@@ -1379,14 +1461,14 @@ async def _replace_assignees(
 async def _upsert_authors(
     session: AsyncSession,
     source: str,
-    mrs: Sequence[MergeRequest],
+    items: Sequence[MergeRequest | Issue],
     person_ids: dict[str, uuid.UUID],
     new_people: dict[str, uuid.UUID],
     code: _CodeSourceState,
 ) -> dict[str, uuid.UUID]:
-    """Grava os autores dos MRs em `people` (upsert: na fonte de código não há
-    outra listagem de pessoas, então os dados do MR são os mais novos) e devolve
-    o mapa `external_author_id → people.id` dos MRs do lote.
+    """Grava os autores dos MRs ou issues em `people` (upsert: na fonte de código
+    não há outra listagem de pessoas, então os dados do item são os mais novos) e
+    devolve o mapa `external_author_id → people.id` dos itens do lote.
 
     Cada autor é gravado uma vez por run: `person_ids` tem os já gravados (com
     commit) e `new_people`, os desta transação, que o chamador junta a
@@ -1395,9 +1477,9 @@ async def _upsert_authors(
     """
     known = {**person_ids, **new_people}
     authors: dict[str, Person] = {}
-    for mr in mrs:
-        if mr.author is not None and mr.author.external_id not in known:
-            authors[mr.author.external_id] = mr.author
+    for item in items:
+        if item.author is not None and item.author.external_id not in known:
+            authors[item.author.external_id] = item.author
     if authors:
         rows = await _upsert(
             session,
@@ -1410,7 +1492,9 @@ async def _upsert_authors(
             new_people[row.external_id] = known[row.external_id] = row.id
 
     missing = {
-        mr.external_author_id for mr in mrs if mr.external_author_id and mr.external_author_id not in known
+        item.external_author_id
+        for item in items
+        if item.external_author_id and item.external_author_id not in known
     }
     if missing:
         lookup = select(PersonRow.external_id, PersonRow.id).where(
@@ -1480,24 +1564,18 @@ _MARK_DELETED = {
     for table in ("containers", "tasks", "repositories")
 }
 
-# Os MRs são reconciliados por repositório: só os daquele repositório podem ser marcados.
-_MARK_DELETED_MERGE_REQUESTS = text(
-    """
-    UPDATE merge_requests SET deleted_at = now()
-    WHERE source = :source AND repository_id = :repository_id AND deleted_at IS NULL
-      AND NOT (external_id = ANY(:seen))
-    """
-).bindparams(bindparam("seen", type_=_TEXT_ARRAY), bindparam("repository_id", type_=Uuid()))
-
-
-# As tags são reconciliadas por repositório, como os MRs.
-_MARK_DELETED_TAGS = text(
-    """
-    UPDATE repository_tags SET deleted_at = now()
-    WHERE source = :source AND repository_id = :repository_id AND deleted_at IS NULL
-      AND NOT (external_id = ANY(:seen))
-    """
-).bindparams(bindparam("seen", type_=_TEXT_ARRAY), bindparam("repository_id", type_=Uuid()))
+# MRs, issues e tags são reconciliados por repositório: só os daquele
+# repositório podem ser marcados.
+_MARK_DELETED_IN_REPOSITORY = {
+    table: text(
+        f"""
+        UPDATE {table} SET deleted_at = now()
+        WHERE source = :source AND repository_id = :repository_id AND deleted_at IS NULL
+          AND NOT (external_id = ANY(:seen))
+        """
+    ).bindparams(bindparam("seen", type_=_TEXT_ARRAY), bindparam("repository_id", type_=Uuid()))
+    for table in ("merge_requests", "issues", "repository_tags")
+}
 
 
 async def _mark_deleted(session: AsyncSession, table: str, source: str, seen: set[str]) -> int:
@@ -1506,23 +1584,13 @@ async def _mark_deleted(session: AsyncSession, table: str, source: str, seen: se
     return result.rowcount or 0
 
 
-async def _mark_deleted_merge_requests(
-    session: AsyncSession, source: str, repository_id: uuid.UUID, seen: set[str]
+async def _mark_deleted_in_repository(
+    session: AsyncSession, table: str, source: str, repository_id: uuid.UUID, seen: set[str]
 ) -> int:
-    """Soft delete dos MRs do repositório que não estão em `seen`. Devolve quantos."""
+    """Soft delete dos registros do repositório (em `table`) que não estão em
+    `seen`. Devolve quantos."""
     result = await session.execute(
-        _MARK_DELETED_MERGE_REQUESTS,
-        {"source": source, "repository_id": repository_id, "seen": sorted(seen)},
-    )
-    return result.rowcount or 0
-
-
-async def _mark_deleted_tags(
-    session: AsyncSession, source: str, repository_id: uuid.UUID, seen: set[str]
-) -> int:
-    """Soft delete das tags do repositório que não estão em `seen`. Devolve quantas."""
-    result = await session.execute(
-        _MARK_DELETED_TAGS,
+        _MARK_DELETED_IN_REPOSITORY[table],
         {"source": source, "repository_id": repository_id, "seen": sorted(seen)},
     )
     return result.rowcount or 0
