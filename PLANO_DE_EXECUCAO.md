@@ -228,7 +228,7 @@ Pré-requisito da Fase I. Não muda nenhuma regra: tudo continua só GET com o t
 | FM-13 | Modelo canônico `Issue` e migration com a tabela `issues` (labels e assignees no `raw`, salvo decisão contrária) | Arquivista | FM-12 | `alembic upgrade head` e `downgrade -1` limpos; Revisor |
 | FM-14 | `iter_issues(repository_id, *, updated_since=None)` e a consulta dos MRs que fecharam uma issue | Conector | FM-13 | Script com issues canônicas; só GET; Revisor |
 | FM-15 | Passo de issues no sync, incremental com watermark, como os MRs; 403/404 é "recurso indisponível" | Sincronista | FM-14 | Sync `succeeded` com issues; o segundo não duplica; Revisor |
-| FM-16 | `GET /issues` (filtros de repositório, estado e busca) | Portal | FM-13 | `curl` com o formato documentado; Revisor |
+| FM-16 | `GET /issues` (filtros de repositório, estado e busca); as confidenciais ficam fora até a Fase 2 (decisão do Carlos, 2026-10-21) | Portal | FM-13 | `curl` com o formato documentado; Revisor |
 | FM-17 | Aba "Issues" no GitLab | Vitrine | FM-16 | typecheck, lint e build |
 
 ## Fase 2: autenticação e horas (à parte)
@@ -329,10 +329,10 @@ O Maestro atualiza a coluna de status a cada mudança. Os status possíveis são
 | ML-08 | integrado | Branch `vitrine/avatar-tags` (ecda4b8, 721dc09, 7f7c503), conferida pelo Maestro no diff. Ícones e tags aparecem só depois da ML-06 |
 | FM-12 | integrado | Branch `batedor/spike-issues` (ad98d54), integrada em fffea3d. O grupo de teste não tinha issues; formatos vistos num projeto público do gitlab.com. Achados e o critério de "fechada por MR" (decisão do Carlos) em `ARCHITECTURE.md` › "Issues". Pendentes (a confirmar): confidenciais, MR aberto com `Closes #N` e issues desativadas; o Carlos cria os casos no grupo de teste e o Batedor roda o script de novo |
 | ML-09 | integrado | Branch `alicerce/rate-limit-gitlab` (5a93e12), integrada em d73bb56, conferida pelo Maestro no diff. Padrão de `GITLAB_RATE_LIMIT_PER_MINUTE` de 600 para 100 (decisão do Carlos, 2026-10-21) |
-| FM-13 | integrado | Branch `arquivista/issues` (149b48d), integrada em db2ea95. Migration `0005`. Aprovada pelo Revisor sem bloqueios. Ao contrário de `merge_requests`, `issues` não tem índice só em `repository_id` (o `UNIQUE (repository_id, iid)` cobre). Sugestão pendente: extrair o validador de autor repetido em `MergeRequest` e `Issue`. Decisão pendente para a FM-16: a API aberta mostra issues confidenciais? |
-| FM-14 | pendente | |
+| FM-13 | integrado | Branch `arquivista/issues` (149b48d), integrada em db2ea95. Migration `0005`. Aprovada pelo Revisor sem bloqueios. Ao contrário de `merge_requests`, `issues` não tem índice só em `repository_id` (o `UNIQUE (repository_id, iid)` cobre). Sugestão pendente: extrair o validador de autor repetido em `MergeRequest` e `Issue`. Decisão do Carlos (2026-10-21) para a FM-16: issues confidenciais ficam fora da API até a Fase 2 |
+| FM-14 | em andamento | |
 | FM-15 | pendente | |
-| FM-16 | pendente | |
+| FM-16 | em andamento | |
 | FM-17 | pendente | |
 | FI-01 | pendente | |
 | FI-02 | pendente | |

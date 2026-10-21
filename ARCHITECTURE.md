@@ -690,6 +690,15 @@ Extensão da Fase M, somente leitura, com o token `read_api` do bot. Pré-requis
 - índices: `issues (source_updated_at)` e `issues (author_id)`; o `(repository_id, iid)` único já cobre `repository_id`;
 - watermark em `sync_state` com `resource` = `gitlab:issues:<id do projeto>`.
 - Os MRs que fecharam a issue não ganham tabela na FM-13: a FI-06 consulta o `closed_by` quando precisar.
+- Ao contrário de `merge_requests`, não há índice só em `repository_id`: o `UNIQUE (repository_id, iid)` cobre.
+
+**Issues confidenciais (decisão do Carlos, 2026-10-21):** são sincronizadas e gravadas com `confidential = true`, mas **ficam fora da API** (nem o título, nem um indicador) até a Fase 2, porque na Fase 1 a API não tem login. A Fase 2 decide quem pode vê-las.
+
+**Conector (FM-14):** `CodeConnector.iter_issues(repository_id, *, updated_since=None) -> BatchListing[Issue]`, com as mesmas regras de `iter_merge_requests` (`full` e completa sem data, incremental com data; erros por recurso em `report.errors`; só 401 e erro de configuração saem como exceção), e uma consulta dos MRs que fecharam uma issue (`/issues/:iid/closed_by`), que devolve `MergeRequest` canônicos. O `raw` da issue fica reduzido aos campos usados, sem `description`.
+
+**Sync (FM-15):** passo de issues por repositório não arquivado e com `issues_enabled` verdadeiro, depois dos MRs, no mesmo modelo dos MRs: watermark `gitlab:issues:<id do projeto>` = maior `source_updated_at` com margem de 5 min, listagem `full` na primeira vez e a cada `SYNC_FULL_RECONCILE_HOURS` (exclusões só com `allows_deletions`), autores em `people` com `source = 'gitlab'`, e 403/404 sem nada recebido como "recurso indisponível". `stats.gitlab` ganha `issues` (contadores) e `issue_listings` por repositório. O sync **não** consulta o `closed_by` (isso é da FI-06).
+
+**API (FM-16):** `GET /issues`, com os filtros `repository_id`, `state` (repetível, `opened` ou `closed`, 422 para vazio ou inválido, como nos MRs), `author_id` e `q` (no título). Lista paginada por `source_updated_at` decrescente, com nulos no fim e o `id` desempatando. Nunca traz `confidential = true` nem issues de repositório removido. O item traz `id`, `iid`, `title`, `state`, `issue_type`, `web_url`, `created_at_source`, `closed_at`, `source_updated_at`, `repository: { id, name, path_with_namespace }` e `author: { id, username } | null`. operationId `list_issues`.
 
 ## Estrutura do repositório (alvo)
 
